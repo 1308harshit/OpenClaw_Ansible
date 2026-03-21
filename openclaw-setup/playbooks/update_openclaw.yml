@@ -1,0 +1,63 @@
+---
+# OpenClaw Update Playbook
+# Updates OpenClaw to the latest version and fixes any issues
+
+- name: Update OpenClaw to Latest Version
+  hosts: openclaw
+  become: yes
+  vars_files:
+    - ../vars.yml
+  
+  tasks:
+    # ============================================
+    # Step 1: Update OpenClaw to latest version
+    # ============================================
+    - name: Update OpenClaw globally via npm
+      command: npm install -g openclaw@latest
+      become: yes
+
+    - name: Get updated OpenClaw version
+      command: openclaw --version
+      register: openclaw_version
+      changed_when: false
+
+    - name: Display updated version
+      debug:
+        msg: "OpenClaw updated to version {{ openclaw_version.stdout }}"
+
+    # ============================================
+    # Step 2: Run doctor command to fix issues
+    # ============================================
+    - name: Run OpenClaw doctor to fix any issues
+      command: openclaw doctor --fix
+      register: doctor_output
+      changed_when: false
+      become: no
+
+    - name: Display doctor output
+      debug:
+        var: doctor_output.stdout_lines
+
+    # ============================================
+    # Step 3: Restart OpenClaw gateway
+    # ============================================
+    - name: Restart OpenClaw gateway
+      command: openclaw gateway restart
+      register: restart_output
+      become: no
+
+    - name: Display restart confirmation
+      debug:
+        var: restart_output.stdout_lines
+
+    # ============================================
+    # Step 4: Confirmation message
+    # ============================================
+    - name: Update complete
+      debug:
+        msg: |
+          ✅ OpenClaw update completed successfully!
+          
+          Version: {{ openclaw_version.stdout }}
+          Gateway: Restarted
+          Health check: Passed

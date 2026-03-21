@@ -1,0 +1,64 @@
+---
+all:
+  vars:
+    ansible_user: admin
+    ansible_network_os: eos
+    ansible_password: admin
+    ansible_connection: httpapi
+    ansible_httpapi_use_ssl: True
+    ansible_httpapi_validate_certs: False
+    ansible_httpapi_port: 443
+    ansible_become: yes
+    ansible_become_method: enable
+  children:
+    # Leaf switches - CONFIGURATION TARGETS
+    # These devices will receive configuration changes during the demo
+    leafs:
+      hosts:
+        leaf1:
+          ansible_host: 172.20.20.11
+        leaf2:
+          ansible_host: 172.20.20.12
+        leaf3:
+          ansible_host: 172.20.20.13
+        leaf4:
+          ansible_host: 172.20.20.14
+    
+    # Spine switches - VISIBILITY ONLY
+    # These devices are shown for topology visibility but NOT configured
+    spines:
+      hosts:
+        spine1:
+          ansible_host: 172.20.20.101
+        spine2:
+          ansible_host: 172.20.20.102
+    
+    # Router R1 - VISIBILITY ONLY
+    # This device is shown for topology visibility but NOT configured
+    routers:
+      hosts:
+        R1:
+          ansible_host: 172.20.20.93
+    
+    # Host devices - VISIBILITY ONLY
+    # These devices are shown for topology visibility but NOT configured
+    hosts:
+      hosts:
+        host1:
+          ansible_host: 172.20.20.91
+        host2:
+          ansible_host: 172.20.20.92
+    
+    # All fabric devices (leafs + spines) - for visibility queries
+    fabric:
+      children:
+        leafs:
+        spines:
+    
+    # All devices - for connectivity checks and facts gathering
+    all_devices:
+      children:
+        leafs:
+        spines:
+        routers:
+        hosts:

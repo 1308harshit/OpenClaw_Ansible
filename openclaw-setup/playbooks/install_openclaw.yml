@@ -1,0 +1,100 @@
+---
+# OpenClaw Installation Playbook
+# This playbook installs Node.js 24 and OpenClaw globally
+# Run this FIRST before any other playbooks
+
+- name: Install OpenClaw on AlmaLinux Server
+  hosts: openclaw
+  become: yes
+  vars_files:
+    - ../vars.yml
+  
+  tasks:
+    # ============================================
+    # Step 1: Check if Node.js is already installed
+    # ============================================
+    - name: Check if Node.js is installed
+      command: node --version
+      register: node_version_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display current Node.js version if installed
+      debug:
+        msg: "Node.js {{ node_version_check.stdout }} is already installed"
+      when: node_version_check.rc == 0
+
+    # ============================================
+    # Step 2: Install Node.js 24 if not present or version < 24
+    # ============================================
+    - name: Install Node.js 24 from NodeSource
+      block:
+        - name: Download NodeSource setup script for Node.js 24
+          get_url:
+            url: https://rpm.nodesource.com/setup_24.x
+            dest: /tmp/nodesource_setup.sh
+            mode: '0755'
+
+        - name: Run NodeSource setup script
+          command: bash /tmp/nodesource_setup.sh
+          args:
+            creates: /etc/yum.repos.d/nodesource-el.repo
+
+        - name: Install Node.js using dnf
+          dnf:
+            name: nodejs
+            state: present
+            update_cache: yes
+
+        - name: Verify Node.js installation
+          command: node --version
+          register: node_installed_version
+          changed_when: false
+
+        - name: Display installed Node.js version
+          debug:
+            msg: "Successfully installed Node.js {{ node_installed_version.stdout }}"
+      when: node_version_check.rc != 0 or node_version_check.stdout | regex_replace('v','') | split('.') | first | int < 24
+
+    # ============================================
+    # Step 3: Install OpenClaw globally via npm
+    # ============================================
+    - name: Install OpenClaw globally
+      command: npm install -g openclaw@latest
+      become: yes
+
+    - name: Verify OpenClaw installation
+      command: openclaw --version
+      register: openclaw_version
+      changed_when: false
+
+    # ============================================
+    # Step 4: Display success message with manual steps
+    # ============================================
+    - name: Installation complete - Display next steps
+      debug:
+        msg: |
+          ✅ OpenClaw {{ openclaw_version.stdout }} has been installed successfully!
+          
+          📋 MANUAL STEPS REQUIRED - Complete these in order:
+          
+          1️⃣  Run the onboarding wizard (interactive):
+              openclaw onboard --install-daemon
+              
+              This will guide you through:
+              - Model selection (GPT-4, Claude, etc.)
+              - AI provider authentication
+              - Daemon setup and configuration
+              - Automatic openclaw.json generation
+          
+          2️⃣  Login to WhatsApp (QR code scan):
+              openclaw channels login
+              
+              Scan the QR code with your WhatsApp mobile app
+          
+          3️⃣  Verify the daemon is running:
+              sudo systemctl status openclaw
+              
+              Should show "active (running)"
+          
+          ⚠️  IMPORTANT: Complete all three steps before using OpenClaw!

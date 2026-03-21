@@ -1,0 +1,45 @@
+---
+- name: Add ansible_demo user to leaf switches
+  hosts: leafs
+  gather_facts: no
+  vars:
+    demo_username: ansible_demo
+    demo_password: ansible_demo
+    demo_privilege: 15
+    demo_role: network-admin
+  
+  tasks:
+    - name: Add ansible_demo user with password authentication
+      arista.eos.eos_user:
+        name: "{{ demo_username }}"
+        configured_password: "{{ demo_password }}"
+        privilege: "{{ demo_privilege }}"
+        role: "{{ demo_role }}"
+        state: present
+      register: user_result
+      no_log: true
+    
+    - name: Display user creation result
+      ansible.builtin.debug:
+        msg: "User {{ demo_username }} status updated on {{ inventory_hostname }}"
+  
+  post_tasks:
+    - name: Verify user exists on device
+      arista.eos.eos_command:
+        commands:
+          - show users | grep {{ demo_username }}
+      register: user_verify
+      failed_when: false
+    
+    - name: Display verification result
+      ansible.builtin.debug:
+        var: user_verify.stdout_lines
+    
+    - name: Test connectivity with facts gathering
+      arista.eos.eos_facts:
+      register: device_facts
+    
+    - name: Display device information
+      ansible.builtin.debug:
+        msg: "Successfully connected to {{ inventory_hostname }}"
+

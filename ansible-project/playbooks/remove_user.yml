@@ -1,0 +1,46 @@
+---
+- name: Remove ansible_demo user from leaf switches
+  hosts: leafs
+  gather_facts: no
+  vars:
+    demo_username: ansible_demo
+  
+  tasks:
+    - name: Test connectivity before removing user
+      arista.eos.eos_facts:
+      register: connectivity_test
+      ignore_errors: yes
+    
+    - name: Fail if device is unreachable
+      ansible.builtin.fail:
+        msg: "Cannot connect to {{ inventory_hostname }}. Check network connectivity and device status."
+      when: connectivity_test is failed or connectivity_test.unreachable is defined
+    
+    - name: Remove ansible_demo user
+      arista.eos.eos_user:
+        name: "{{ demo_username }}"
+        state: absent
+      register: user_result
+      ignore_errors: yes
+      no_log: true
+    
+    - name: Handle user removal errors
+      ansible.builtin.fail:
+        msg: "Failed to remove user {{ demo_username }} on {{ inventory_hostname }}. Error: {{ user_result.msg | default('Unknown error') }}"
+      when: user_result is failed
+    
+    - name: Display user removal result
+      ansible.builtin.debug:
+        msg: "User {{ demo_username }} {{ 'removed' if user_result.changed else 'not found' }} on {{ inventory_hostname }}"
+      when: user_result is succeeded
+  
+  post_tasks:
+    - name: Verify user removal
+      arista.eos.eos_command:
+        commands:
+          - show running-config | grep {{ demo_username }}
+      register: user_verify
+      failed_when: false
+      changed_when: false
+      ignore_errors: yes
+

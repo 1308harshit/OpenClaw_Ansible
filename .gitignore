@@ -1,0 +1,32 @@
+# Ansible
+*.retry
+*.log
+
+# SSH Keys
+*.pem
+*.key
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+
+# Temporary files
+*.tmp
+*.bak

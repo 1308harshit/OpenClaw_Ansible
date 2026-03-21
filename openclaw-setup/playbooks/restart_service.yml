@@ -1,0 +1,71 @@
+---
+# Service Restart Playbook
+# Restarts any systemd service with proper error handling
+# Usage: ansible-playbook restart_service.yml -e "service_name=nginx"
+
+- name: Restart System Service
+  hosts: openclaw
+  become: yes
+  vars_files:
+    - ../vars.yml
+  
+  tasks:
+    # ============================================
+    # Validate required variable
+    # ============================================
+    - name: Check if service_name variable is provided
+      fail:
+        msg: |
+          ❌ ERROR: service_name variable is required!
+          
+          Usage:
+          ansible-playbook restart_service.yml -e "service_name=YOUR_SERVICE_NAME"
+          
+          Examples:
+          ansible-playbook restart_service.yml -e "service_name=nginx"
+          ansible-playbook restart_service.yml -e "service_name=openclaw"
+          ansible-playbook restart_service.yml -e "service_name=sshd"
+      when: service_name is not defined or service_name == ""
+
+    # ============================================
+    # Restart service with error handling
+    # ============================================
+    - name: Restart the specified service
+      block:
+        - name: Attempt to restart {{ service_name }}
+          service:
+            name: "{{ service_name }}"
+            state: restarted
+          register: restart_result
+
+        - name: Get service status after restart
+          command: systemctl status {{ service_name }}
+          register: service_status
+          changed_when: false
+          ignore_errors: yes
+
+        - name: Display success message
+          debug:
+            msg: |
+              ✅ Service '{{ service_name }}' restarted successfully!
+              
+              Status:
+              {{ service_status.stdout }}
+
+      rescue:
+        - name: Display error message
+          debug:
+            msg: |
+              ❌ Failed to restart service '{{ service_name }}'
+              
+              Error details:
+              {{ ansible_failed_result.msg | default('Unknown error occurred') }}
+              
+              Troubleshooting:
+              1. Check if service exists: systemctl list-units --type=service | grep {{ service_name }}
+              2. Check service logs: journalctl -u {{ service_name }} -n 50
+              3. Verify service file: systemctl cat {{ service_name }}
+
+        - name: Fail the playbook with clear error
+          fail:
+            msg: "Service restart failed. See error details above."
