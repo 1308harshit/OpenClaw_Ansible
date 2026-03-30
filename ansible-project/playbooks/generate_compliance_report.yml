@@ -1,0 +1,181 @@
+---
+- name: Generate compliance report (HTML) for EOS devices
+  hosts: fabric:routers
+  gather_facts: no
+
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+    compliance_dir: "{{ reports_dir }}/compliance"
+    dashboard_file: "{{ compliance_dir }}/index.html"
+    json_file: "{{ compliance_dir }}/compliance_report.json"
+
+  tasks:
+    - name: Create compliance report directory
+      ansible.builtin.file:
+        path: "{{ compliance_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+      check_mode: no
+
+    - name: Collect version information
+      arista.eos.eos_command:
+        commands:
+          - show version
+      register: show_version
+
+    - name: Collect management IP information
+      arista.eos.eos_command:
+        commands:
+          - show ip interface brief
+      register: ip_int_brief
+
+    - name: Build per-device compliance fields
+      ansible.builtin.set_fact:
+        compliance_entry:
+          vendor: "Arista"
+          brand: >-
+            {{
+              (
+                (show_version.stdout_lines[0] | default([]) | first | default(''))
+                | regex_replace('^Arista +', '')
+              )
+              | default('EOS', true)
+            }}
+          hostname: "{{ inventory_hostname }}"
+          management_ip: >-
+            {{
+              (
+                (
+                  ip_int_brief.stdout_lines[0]
+                  | default([])
+                  | select('match', '^Management')
+                  | first
+                  | default('')
+                ).split()
+                | default([])
+              )[1]
+              | default(ansible_host | default('N/A'), true)
+              | regex_replace('/.*$', '')
+            }}
+          serial_number: >-
+            {{
+              (
+                (
+                  show_version.stdout_lines[0]
+                  | default([])
+                  | select('match', '^Serial number:')
+                  | first
+                  | default('')
+                )
+                | regex_replace('^Serial number: *', '')
+              )
+              | default('N/A', true)
+            }}
+          software_image_version: >-
+            {{
+              (
+                (
+                  show_version.stdout_lines[0]
+                  | default([])
+                  | select('match', '^Software image version:')
+                  | first
+                  | default('')
+                )
+                | regex_replace('^Software image version: *', '')
+              )
+              | default('N/A', true)
+            }}
+
+    - name: Aggregate compliance entries
+      ansible.builtin.set_fact:
+        compliance_entries: >-
+          {{
+            ansible_play_hosts_all
+            | map('extract', hostvars, 'compliance_entry')
+            | list
+          }}
+      delegate_to: localhost
+      run_once: true
+
+    - name: Get timestamp
+      ansible.builtin.command: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      check_mode: no
+
+    - name: Write compliance report (JSON)
+      ansible.builtin.copy:
+        dest: "{{ json_file }}"
+        mode: "0644"
+        content: "{{ compliance_entries | to_nice_json }}"
+      delegate_to: localhost
+      run_once: true
+      check_mode: no
+
+    - name: Generate compliance report (HTML)
+      ansible.builtin.copy:
+        dest: "{{ dashboard_file }}"
+        mode: "0644"
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Compliance Report</title>
+            <style>
+              body { font-family: Arial, sans-serif; background: #f4f6f8; padding: 20px; }
+              h1 { margin-bottom: 6px; }
+              .meta { color: #666; margin-bottom: 16px; font-size: 12px; }
+              table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; }
+              th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; }
+              th { background: #0f172a; color: #fff; font-weight: 600; }
+              tr:hover td { background: #fafafa; }
+              .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 12px; }
+              code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+            </style>
+          </head>
+          <body>
+            <h1>Compliance Report</h1>
+            <div class="meta">
+              Generated: <span class="pill">{{ timestamp_result.stdout }}</span>
+              &nbsp; | &nbsp; Source: <code>fabric:routers</code>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Vendor / Brand</th>
+                  <th>Hostname</th>
+                  <th>Management IP</th>
+                  <th>Serial Number</th>
+                  <th>Software Image Version</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for d in compliance_entries | sort(attribute='hostname') %}
+                <tr>
+                  <td>{{ d.vendor }} / {{ d.brand }}</td>
+                  <td>{{ d.hostname }}</td>
+                  <td>{{ d.management_ip }}</td>
+                  <td>{{ d.serial_number }}</td>
+                  <td>{{ d.software_image_version }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </body>
+          </html>
+      delegate_to: localhost
+      run_once: true
+      check_mode: no
+
+    - name: Display report location
+      ansible.builtin.debug:
+        msg:
+          - "Compliance HTML: {{ dashboard_file }}"
+          - "Compliance JSON: {{ json_file }}"
+

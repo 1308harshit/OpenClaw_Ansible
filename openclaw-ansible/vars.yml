@@ -1,0 +1,13 @@
+---
+# OpenClaw Setup Variables
+# IMPORTANT: Fill in these placeholders before running any playbook
+
+# Server configuration
+ansible_user: ansible
+server_ip: 100.30.182.96  # Replace with your server IP address
+
+# WhatsApp configuration (required for install_openclaw.yml)
+whatsapp_phone: +919328315950  # Replace with your WhatsApp phone number (format: +1234567890)
+
+# Node.js version
+nodejs_version: 24

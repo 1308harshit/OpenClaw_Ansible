@@ -1,0 +1,42 @@
+---
+- name: Conditional skip if interface is down
+  hosts: leafs
+  gather_facts: no
+  vars:
+    check_interface: Ethernet1
+  
+  tasks:
+    - name: Check interface status
+      arista.eos.eos_command:
+        commands:
+          - show interfaces {{ check_interface }} status
+      register: interface_status
+      failed_when: false
+    
+    - name: Extract interface state
+      ansible.builtin.set_fact:
+        interface_is_down: "{{ 'down' in interface_status.stdout[0] | lower or 'notconnect' in interface_status.stdout[0] | lower or 'admin down' in interface_status.stdout[0] | lower }}"
+    
+    - name: Display interface status
+      ansible.builtin.debug:
+        msg: "Interface {{ check_interface }} on {{ inventory_hostname }} is {{ 'DOWN' if interface_is_down else 'UP' }}"
+    
+    - name: Apply configuration (only if interface is UP)
+      arista.eos.eos_config:
+        lines:
+          - description "Demo conditional config - Interface is UP"
+        parents:
+          - interface {{ check_interface }}
+      register: config_result
+      when: not interface_is_down
+    
+    - name: Display skip message (if interface is DOWN)
+      ansible.builtin.debug:
+        msg: "SKIPPED: Interface {{ check_interface }} is DOWN on {{ inventory_hostname }}. Configuration not applied."
+      when: interface_is_down
+    
+    - name: Display success message (if interface is UP)
+      ansible.builtin.debug:
+        msg: "SUCCESS: Configuration applied to {{ check_interface }} on {{ inventory_hostname }} because interface is UP."
+      when: not interface_is_down and config_result.changed | default(false)
+

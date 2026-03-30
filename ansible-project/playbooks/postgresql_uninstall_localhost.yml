@@ -1,0 +1,48 @@
+---
+- name: Stop and uninstall PostgreSQL (localhost Linux)
+  hosts: localhost_linux
+  gather_facts: true
+  become: true
+  connection: local
+  
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ansible_become_password: ansible
+
+  tasks:
+    - name: Stop PostgreSQL service if present
+      ansible.builtin.service:
+        name: postgresql
+        state: stopped
+        enabled: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove PostgreSQL packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+        state: absent
+        purge: true
+      when: (ansible_facts.get('os_family') == "Debian")
+
+    - name: Remove PostgreSQL packages (RHEL/AlmaLinux)
+      ansible.builtin.dnf:
+        name:
+          - postgresql
+          - postgresql-server
+        state: absent
+      when: (ansible_facts.get('os_family') == "RedHat")
+
+    - name: Remove PostgreSQL data directories (best-effort)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/postgresql
+        - /etc/postgresql
+        - /var/lib/pgsql
+      failed_when: false

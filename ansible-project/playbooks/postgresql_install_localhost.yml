@@ -1,0 +1,50 @@
+---
+- name: Install and start PostgreSQL (localhost Linux)
+  hosts: localhost_linux
+  gather_facts: true
+  become: true
+  connection: local
+  
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ansible_become_password: ansible
+
+  tasks:
+    - name: Update apt cache (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Install PostgreSQL packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+        state: present
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Install PostgreSQL packages (RHEL/AlmaLinux)
+      ansible.builtin.dnf:
+        name:
+          - postgresql
+          - postgresql-server
+        state: present
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Initialize PostgreSQL database (RHEL/AlmaLinux)
+      ansible.builtin.command: postgresql-setup --initdb
+      args:
+        creates: /var/lib/pgsql/data/PG_VERSION
+      when:
+        - ansible_facts.os_family == "RedHat"
+        - not ansible_check_mode
+
+    - name: Enable and start PostgreSQL service
+      ansible.builtin.service:
+        name: postgresql
+        enabled: true
+        state: started
+      when: not ansible_check_mode

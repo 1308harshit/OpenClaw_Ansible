@@ -1,0 +1,156 @@
+---
+- name: Generate consolidated switch summary report (HTML)
+  hosts: all_devices
+  gather_facts: no
+
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+    summary_dir: "{{ reports_dir }}/switch_summary"
+    dashboard_file: "{{ summary_dir }}/index.html"
+
+  tasks:
+    - name: Create summary directory
+      ansible.builtin.file:
+        path: "{{ summary_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Get interface status from device
+      arista.eos.eos_command:
+        commands:
+          - show interfaces status
+      register: interface_status
+
+    # STEP 1: Filter valid interface lines ONCE
+    - name: Extract interface lines
+      ansible.builtin.set_fact:
+        iface_lines: >-
+          {{
+            interface_status.stdout_lines[0]
+            | select('match', '^(Et|Ma|Lo)')
+            | list
+          }}
+
+    # STEP 2: Correctly classify interface states
+    - name: Build per-device summary (corrected)
+      ansible.builtin.set_fact:
+        switch_summary:
+          hostname: "{{ inventory_hostname }}"
+          total: "{{ iface_lines | length }}"
+          up: "{{ iface_lines
+            | select('search', ' connected ')
+            | list | length }}"
+          down: "{{ iface_lines
+            | select('search', '(notconnect|disabled| down )')
+            | list | length }}"
+
+    # STEP 3: Aggregate summaries from all devices (CORRECT way)
+    - name: Aggregate summaries from all devices
+      ansible.builtin.set_fact:
+        switch_summaries: >-
+          {{
+            groups['all_devices']
+            | map('extract', hostvars, 'switch_summary')
+            | list
+          }}
+      delegate_to: localhost
+      run_once: true
+
+    - name: Get timestamp
+      ansible.builtin.command: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+
+    # STEP 4: Generate ONE consolidated HTML dashboard
+    - name: Generate consolidated HTML dashboard
+      ansible.builtin.copy:
+        dest: "{{ dashboard_file }}"
+        mode: "0644"
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Switch Summary Dashboard</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                background-color: #f4f6f8;
+                padding: 20px;
+              }
+              h1 {
+                margin-bottom: 20px;
+              }
+              .grid {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 20px;
+              }
+              .card {
+                background: #ffffff;
+                padding: 20px;
+                width: 320px;
+                border-radius: 6px;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+              }
+              h2 {
+                margin-top: 0;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+              }
+              td {
+                padding: 6px;
+                border-bottom: 1px solid #ddd;
+              }
+              .up {
+                color: green;
+                font-weight: bold;
+              }
+              .down {
+                color: red;
+                font-weight: bold;
+              }
+              .meta {
+                margin-top: 8px;
+                font-size: 12px;
+                color: #666;
+              }
+            </style>
+          </head>
+          <body>
+            <h1>Switch Summary Dashboard</h1>
+            <div class="grid">
+            {% for device in switch_summaries %}
+              <div class="card">
+                <h2>{{ device.hostname }}</h2>
+                <table>
+                  <tr>
+                    <td>Total Interfaces</td>
+                    <td>{{ device.total }}</td>
+                  </tr>
+                  <tr>
+                    <td>Interfaces UP</td>
+                    <td class="up">{{ device.up }}</td>
+                  </tr>
+                  <tr>
+                    <td>Interfaces DOWN</td>
+                    <td class="down">{{ device.down }}</td>
+                  </tr>
+                </table>
+                <div class="meta">
+                  Generated: {{ timestamp_result.stdout }}
+                </div>
+              </div>
+            {% endfor %}
+            </div>
+          </body>
+          </html>
+      delegate_to: localhost
+      run_once: true

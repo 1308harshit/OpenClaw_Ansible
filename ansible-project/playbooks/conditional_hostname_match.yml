@@ -1,0 +1,35 @@
+---
+- name: Apply configuration only if hostname matches pattern
+  hosts: all_devices
+  gather_facts: no
+  vars:
+    hostname_pattern: "leaf*"
+  
+  tasks:
+    - name: Check if hostname matches pattern
+      ansible.builtin.set_fact:
+        hostname_matches: "{{ inventory_hostname is match(hostname_pattern) }}"
+    
+    - name: Display hostname check result
+      ansible.builtin.debug:
+        msg: "Hostname {{ inventory_hostname }} {{ 'MATCHES' if hostname_matches else 'DOES NOT MATCH' }} pattern '{{ hostname_pattern }}'"
+    
+    - name: Apply configuration (only if hostname matches)
+      arista.eos.eos_config:
+        lines:
+          - description "Demo conditional config - Hostname matches pattern"
+        parents:
+          - interface Ethernet1
+      register: config_result
+      when: hostname_matches
+    
+    - name: Display skip message (if hostname does not match)
+      ansible.builtin.debug:
+        msg: "SKIPPED: Hostname {{ inventory_hostname }} does not match pattern '{{ hostname_pattern }}'. Configuration not applied."
+      when: not hostname_matches
+    
+    - name: Display success message (if hostname matches)
+      ansible.builtin.debug:
+        msg: "SUCCESS: Configuration applied to {{ inventory_hostname }} because hostname matches pattern '{{ hostname_pattern }}'."
+      when: hostname_matches and config_result.changed | default(false)
+

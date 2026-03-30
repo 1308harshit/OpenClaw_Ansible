@@ -1,0 +1,190 @@
+---
+- name: Deploy New SSL Certificate from Vault (Auto-Remediation)
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    vault_addr: "http://127.0.0.1:8200"
+    vault_bin: "/usr/local/bin/vault"
+    ssl_cert_path: "/etc/nginx/ssl/server.crt"
+    ssl_key_path: "/etc/nginx/ssl/server.key"
+    ca_cert_path: "/etc/nginx/ssl/ca.crt"
+    fullchain_cert_path: "/etc/nginx/ssl/fullchain.crt"
+    backup_cert_path: "/etc/nginx/ssl/server.crt.pre-renewal"
+    backup_key_path: "/etc/nginx/ssl/server.key.pre-renewal"
+    domain_name: "snoopy.timlam007.com"
+    cert_ttl: "720h"  # 30 days
+
+  tasks:
+    - name: Check current certificate expiry status
+      ansible.builtin.shell: |
+        if [ ! -f {{ ssl_cert_path }} ]; then
+          echo "not_found"
+          exit 0
+        fi
+        
+        NOT_AFTER=$(openssl x509 -in {{ ssl_cert_path }} -noout -enddate | cut -d= -f2)
+        EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        
+        if [ $DAYS_REMAINING -lt 0 ]; then
+          echo "expired"
+        elif [ $DAYS_REMAINING -lt 7 ]; then
+          echo "expiring_soon"
+        else
+          echo "valid"
+        fi
+      register: cert_status
+      changed_when: false
+
+    - name: Display current certificate status
+      ansible.builtin.debug:
+        msg:
+          - "Current certificate status: {{ cert_status.stdout }}"
+          - "{% if cert_status.stdout == 'expired' %}[ERROR] Certificate is EXPIRED - renewal required{% elif cert_status.stdout == 'expiring_soon' %}[WARNING] Certificate is expiring soon - renewal recommended{% elif cert_status.stdout == 'valid' %}[OK] Certificate is valid - renewal proceeding anyway{% else %}[ERROR] Certificate not found - will request new one{% endif %}"
+
+    - name: Read Vault credentials
+      ansible.builtin.slurp:
+        src: /root/.vault_init.json
+      register: vault_creds
+
+    - name: Parse Vault credentials
+      ansible.builtin.set_fact:
+        vault_token: "{{ (vault_creds.content | b64decode | from_json).root_token }}"
+
+    - name: Backup current certificate (if exists)
+      ansible.builtin.copy:
+        src: "{{ ssl_cert_path }}"
+        dest: "{{ backup_cert_path }}"
+        remote_src: yes
+        mode: '0644'
+      when: cert_status.stdout != "not_found"
+
+    - name: Backup current private key (if exists)
+      ansible.builtin.copy:
+        src: "{{ ssl_key_path }}"
+        dest: "{{ backup_key_path }}"
+        remote_src: yes
+        mode: '0600'
+      when: cert_status.stdout != "not_found"
+
+    - name: Request new SSL certificate from Vault
+      ansible.builtin.shell: |
+        {{ vault_bin }} write -format=json pki/issue/web-server \
+          common_name="{{ domain_name }}" \
+          ttl="{{ cert_ttl }}"
+      environment:
+        VAULT_ADDR: "{{ vault_addr }}"
+        VAULT_TOKEN: "{{ vault_token }}"
+      register: new_cert_output
+
+    - name: Parse certificate response
+      ansible.builtin.set_fact:
+        new_cert_data: "{{ new_cert_output.stdout | from_json }}"
+
+    - name: Deploy new certificate
+      ansible.builtin.copy:
+        content: "{{ new_cert_data.data.certificate }}"
+        dest: "{{ ssl_cert_path }}"
+        mode: '0644'
+
+    - name: Deploy new private key
+      ansible.builtin.copy:
+        content: "{{ new_cert_data.data.private_key }}"
+        dest: "{{ ssl_key_path }}"
+        mode: '0600'
+
+    - name: Deploy CA certificate
+      ansible.builtin.copy:
+        content: "{{ new_cert_data.data.issuing_ca }}"
+        dest: "{{ ca_cert_path }}"
+        mode: '0644'
+
+    - name: Build full chain certificate for Nginx (server + issuing CA)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat {{ ssl_cert_path }} {{ ca_cert_path }} > {{ fullchain_cert_path }}
+        chmod 0644 {{ fullchain_cert_path }}
+      changed_when: false
+
+    - name: Test Nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Reload Nginx to apply new certificate
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_test.rc == 0
+
+    - name: Verify new certificate
+      ansible.builtin.shell: |
+        NOT_AFTER=$(openssl x509 -in {{ ssl_cert_path }} -noout -enddate | cut -d= -f2)
+        EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        
+        SUBJECT=$(openssl x509 -in {{ ssl_cert_path }} -noout -subject | sed 's/subject=//')
+        ISSUER=$(openssl x509 -in {{ ssl_cert_path }} -noout -issuer | sed 's/issuer=//')
+        SERIAL=$(openssl x509 -in {{ ssl_cert_path }} -noout -serial | cut -d= -f2)
+        
+        cat <<EOF
+        {
+          "days_remaining": $DAYS_REMAINING,
+          "expires": "$NOT_AFTER",
+          "subject": "$SUBJECT",
+          "issuer": "$ISSUER",
+          "serial": "$SERIAL"
+        }
+        EOF
+      register: new_cert_info
+      changed_when: false
+
+    - name: Parse new certificate info
+      ansible.builtin.set_fact:
+        new_cert: "{{ new_cert_info.stdout | from_json }}"
+
+    - name: Test HTTPS endpoint
+      ansible.builtin.uri:
+        url: https://localhost/health
+        validate_certs: no
+        return_content: yes
+      register: https_test
+      failed_when: false
+
+    - name: Display deployment success message
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "  [SUCCESS] SSL CERTIFICATE RENEWED & DEPLOYED"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Previous Certificate ==="
+          - "Status: {{ cert_status.stdout | upper }}"
+          - "Backup saved: {{ backup_cert_path }}"
+          - ""
+          - "=== New Certificate ==="
+          - "Subject: {{ new_cert.subject }}"
+          - "Issuer: {{ new_cert.issuer }}"
+          - "Serial: {{ new_cert.serial }}"
+          - "Valid Until: {{ new_cert.expires }}"
+          - "Days Valid: {{ new_cert.days_remaining }} days"
+          - ""
+          - "=== Deployment Status ==="
+          - "Nginx Config Test: {{ '[OK] PASSED' if nginx_test.rc == 0 else '[FAILED]' }}"
+          - "Nginx Reloaded: {{ '[OK] YES' if nginx_test.rc == 0 else '[SKIPPED]' }}"
+          - "HTTPS Endpoint: {{ '[OK] HEALTHY (' + (https_test.status | string) + ')' if https_test.status == 200 else '[WARNING] CHECK MANUALLY' }}"
+          - ""
+          - "=== Next Steps ==="
+          - "• Test: curl -k https://snoopy.timlam007.com"
+          - "• Verify: Run ssl_cert_check_expiry.yml"
+          - "• Report: Run ssl_cert_generate_report.yml"
+          - ""
+          - "════════════════════════════════════════"

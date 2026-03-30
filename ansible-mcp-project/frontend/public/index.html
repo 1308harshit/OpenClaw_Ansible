@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ansible MCP Buddy</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        margin: 0;
+        padding: 40px 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+      }
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        padding: 40px;
+        position: relative;
+      }
+      .header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 12px;
+      }
+      h1 {
+        margin: 0;
+        color: #333;
+        font-size: 32px;
+        font-weight: 600;
+      }
+      .datetime-display {
+        text-align: right;
+        font-size: 14px;
+        color: #666;
+        line-height: 1.4;
+      }
+      .datetime-display .time {
+        font-size: 18px;
+        font-weight: 600;
+        color: #667eea;
+      }
+      .datetime-display .date {
+        font-size: 13px;
+        color: #888;
+      }
+      .muted {
+        color: #666;
+        font-size: 15px;
+        margin-bottom: 12px;
+      }
+      .model-info {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .model-badge {
+        display: inline-block;
+        background: #f0f0f0;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        color: #555;
+      }
+      .model-badge strong {
+        color: #667eea;
+      }
+      textarea {
+        width: 100%;
+        height: 140px;
+        padding: 14px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        font-size: 15px;
+        font-family: inherit;
+        resize: vertical;
+        transition: border-color 0.2s;
+      }
+      textarea:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+      button {
+        margin-top: 12px;
+        padding: 12px 28px;
+        background: #667eea;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover {
+        background: #5568d3;
+      }
+      button:active {
+        transform: scale(0.98);
+      }
+      h3 {
+        margin: 32px 0 12px 0;
+        color: #333;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      pre {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 20px;
+        border-radius: 8px;
+        overflow: auto;
+        font-size: 14px;
+        line-height: 1.6;
+        min-height: 100px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header-row">
+        <h1>Ansible MCP Buddy</h1>
+        <div class="datetime-display">
+          <div class="time" id="hkt-time">--:--:--</div>
+          <div class="date" id="hkt-date">Loading...</div>
+        </div>
+      </div>
+      <div class="model-info">
+        <div class="model-badge">
+          Provider: <strong id="gemini-provider">Loading...</strong>
+        </div>
+        <div class="model-badge">
+          Model: <strong id="gemini-model">Loading...</strong>
+        </div>
+      </div>
+
+      <textarea id="q" placeholder="e.g. List playbooks, then run show_interfaces_all.yml in check mode"></textarea>
+      <div style="display: flex; gap: 12px; margin-top: 12px;">
+        <button id="go">Send</button>
+        <button id="history-btn" style="background: #764ba2;">View History</button>
+      </div>
+
+      <h3>Result</h3>
+      <pre id="out">(waiting)</pre>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
+
+

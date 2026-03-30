@@ -1,0 +1,65 @@
+---
+- name: Show only down interfaces from all devices
+  hosts: all_devices
+  gather_facts: no
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+  
+  tasks:
+    - name: Create reports directory if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Get all interfaces information
+      arista.eos.eos_command:
+        commands:
+          - show interfaces status
+      register: interfaces_result
+    
+    - name: Extract interface lines
+      ansible.builtin.set_fact:
+        iface_lines: >-
+          {{
+            interfaces_result.stdout_lines[0]
+            | select('match', '^(Et|Ma|Lo)')
+            | list
+          }}
+
+    - name: Filter down interfaces
+      ansible.builtin.set_fact:
+        down_interfaces: "{{ iface_lines | select('search', '(notconnect|disabled| down )') | list }}"
+    
+    - name: Get current timestamp
+      ansible.builtin.shell: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+    
+    - name: Save down interfaces report to file
+      ansible.builtin.copy:
+        content: |
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+          
+          Down Interfaces:
+          {% if down_interfaces | length > 0 %}
+          {% for line in down_interfaces %}
+          {{ line }}
+          {% endfor %}
+          {% else %}
+          No down interfaces found on this device.
+          {% endif %}
+        dest: "{{ reports_dir }}/{{ inventory_hostname }}_interfaces_down.txt"
+        mode: '0644'
+      delegate_to: localhost
+    
+    - name: Display summary
+      ansible.builtin.debug:
+        msg: "Down interfaces report saved to {{ reports_dir }}/{{ inventory_hostname }}_interfaces_down.txt ({{ down_interfaces | length }} down interfaces found)"
+      when: down_interfaces | length > 0
+

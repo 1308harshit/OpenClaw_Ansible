@@ -1,0 +1,30 @@
+---
+- name: Step 1 of 2 - Check SSL Certificate Expiry Date
+  import_playbook: ssl_cert_check_expiry.yml
+
+- name: Step 2 of 2 - Alert if SSL certificate expires within threshold
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    expiry_threshold_days: 3
+
+  tasks:
+    - name: Fail when certificate is expired or expiring soon (alert condition)
+      ansible.builtin.fail:
+        msg: >-
+          [ALERT] SSL certificate expires in {{ certificate_days_remaining | default('UNKNOWN') }} days
+          (threshold={{ expiry_threshold_days }}). Run: ssl_cert_deploy_new.yml
+      when: (certificate_days_remaining | default(9999) | int) <= (expiry_threshold_days | int)
+
+    - name: Certificate not expiring within threshold
+      ansible.builtin.debug:
+        msg:
+          - "[OK] Certificate is not expiring within {{ expiry_threshold_days }} days."
+          - "Days remaining: {{ certificate_days_remaining }}"
+

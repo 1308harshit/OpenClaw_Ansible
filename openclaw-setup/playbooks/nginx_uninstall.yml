@@ -1,0 +1,69 @@
+---
+# Nginx Uninstallation Playbook
+# Completely removes Nginx and all its files from the server
+
+- name: Uninstall Nginx
+  hosts: openclaw
+  become: yes
+  vars_files:
+    - ../vars.yml
+
+  tasks:
+    - name: Stop Nginx service
+      systemd:
+        name: nginx
+        state: stopped
+      failed_when: false
+
+    - name: Disable Nginx service
+      systemd:
+        name: nginx
+        enabled: no
+      failed_when: false
+
+    - name: Remove Nginx package
+      dnf:
+        name: nginx
+        state: absent
+
+    - name: Remove Nginx configuration directory
+      file:
+        path: /etc/nginx
+        state: absent
+
+    - name: Remove Nginx log directory
+      file:
+        path: /var/log/nginx
+        state: absent
+
+    - name: Remove Nginx cache directory
+      file:
+        path: /var/cache/nginx
+        state: absent
+
+    - name: Remove Nginx lib directory
+      file:
+        path: /var/lib/nginx
+        state: absent
+
+    - name: Remove Nginx user
+      user:
+        name: nginx
+        state: absent
+        remove: yes
+      failed_when: false
+
+    - name: Clean up dnf cache
+      dnf:
+        autoremove: yes
+
+    - name: Verify Nginx is removed
+      command: which nginx
+      register: nginx_check
+      failed_when: false
+      changed_when: false
+
+    - name: Display uninstall status
+      debug:
+        msg: |
+          {{ '[OK] Nginx completely removed from server!' if nginx_check.rc != 0 else '[WARNING] Some Nginx components may still exist' }}

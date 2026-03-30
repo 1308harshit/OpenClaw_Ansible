@@ -1,0 +1,130 @@
+---
+- name: Display Setup Banner
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Display setup banner
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "   [STARTING] SSL DEMO ENVIRONMENT SETUP"
+          - "════════════════════════════════════════"
+          - ""
+          - "This will install and configure:"
+          - "  • HashiCorp Vault (PKI Engine)"
+          - "  • Nginx (HTTPS Web Server)"
+          - "  • SSL Certificates (automated)"
+          - "  • Initial monitoring & reporting"
+          - ""
+          - "Estimated time: 3-5 minutes"
+          - ""
+          - "════════════════════════════════════════"
+
+- name: Step 1 of 6 - Install and configure HashiCorp Vault
+  import_playbook: vault_install_configure.yml
+
+- name: Step 2 of 6 - Install and configure Nginx
+  import_playbook: nginx_install_configure.yml
+
+- name: Step 3 of 6 - Start Nginx service
+  import_playbook: nginx_start.yml
+
+- name: Step 4 of 6 - Verify Vault status
+  import_playbook: vault_status_check.yml
+
+- name: Step 5 of 6 - Check SSL certificate expiry
+  import_playbook: ssl_cert_check_expiry.yml
+
+- name: Step 6 of 6 - Generate initial HTML report
+  import_playbook: ssl_cert_generate_report.yml
+
+- name: Display Setup Completion Summary
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+  tasks:
+    - name: Get server public IP address (try AWS metadata first)
+      ansible.builtin.shell: |
+        # Try to get public IP from AWS EC2 metadata
+        PUBLIC_IP=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
+        
+        # If that fails, use private IP
+        if [ -z "$PUBLIC_IP" ]; then
+          PUBLIC_IP=$(hostname -I | awk '{print $1}')
+        fi
+        
+        echo "$PUBLIC_IP"
+      register: server_ip_output
+      changed_when: false
+
+    - name: Set server IP fact
+      ansible.builtin.set_fact:
+        server_ip: "{{ server_ip_output.stdout }}"
+
+    - name: Final verification - test HTTPS endpoint
+      ansible.builtin.uri:
+        url: https://localhost/health
+        validate_certs: no
+        return_content: yes
+      register: final_https_test
+      failed_when: false
+
+    - name: Check if Node frontend is reachable locally (port 8000)
+      ansible.builtin.uri:
+        url: http://localhost:8000/
+        return_content: false
+        status_code: [200, 302, 401, 403]
+      register: node_http_test
+      failed_when: false
+
+    - name: Display setup completion summary
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "════════════════════════════════════════"
+          - "   [SUCCESS] SSL DEMO ENVIRONMENT READY!"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Services Status ==="
+          - "Vault: [OK] Running (http://127.0.0.1:8200)"
+          - "Nginx: {{ '[OK] Running' if final_https_test.status == 200 else '[WARNING] Check manually' }}"
+          - "HTTPS: {{ '[OK] Accessible' if final_https_test.status == 200 else '[WARNING] Check manually' }}"
+          - "Node Frontend (localhost:8000): {{ '[OK] Reachable' if node_http_test.status is defined and (node_http_test.status in [200,302,401,403]) else '[WARNING] Not reachable (will cause 502)' }}"
+          - ""
+          - "=== Access Points ==="
+          - "MCP Frontend (HTTPS): https://snoopy.timlam007.com"
+          - "Vault UI (HTTPS): https://snoopy.timlam007.com/vault-ui/"
+          - "Direct Frontend (HTTP): http://{{ server_ip }}:8000"
+          - "SSL Report: https://snoopy.timlam007.com/reports/ssl_report/index.html"
+          - ""
+          - "=== Demo Workflow ==="
+          - "1. Verify: Run 'Check SSL certificate status'"
+          - "2. Problem: Run 'Make SSL certificate expire'"
+          - "3. Verify: Run 'Check SSL certificate status' (should show EXPIRED)"
+          - "4. Fix: Run 'Deploy new SSL certificate'"
+          - "5. Verify: Run 'Check SSL certificate status' (should show VALID)"
+          - "6. Report: Run 'Generate SSL certificate report'"
+          - ""
+          - "=== Quick Test Commands ==="
+          - "curl -k https://snoopy.timlam007.com"
+          - "curl http://localhost:8000"
+          - "openssl s_client -connect snoopy.timlam007.com:443 -servername snoopy.timlam007.com"
+          - ""
+          - "=== Important Notes ==="
+          - "- Access via HTTPS: https://snoopy.timlam007.com (SSL secured)"
+          - "- Direct HTTP access: http://{{ server_ip }}:8000 (not secured)"
+          - "- Nginx reverse proxies HTTPS to Node.js frontend on port 8000"
+          - ""
+          - "=== Important Files ==="
+          - "Vault Root Token: /root/.vault_init.json"
+          - "SSL Certificate: /etc/nginx/ssl/server.crt"
+          - "SSL Private Key: /etc/nginx/ssl/server.key"
+          - "Nginx Config: /etc/nginx/conf.d/snoopy_timlam007.conf"
+          - ""
+          - "[TIP] To clean everything, run: demo_cleanup_all.yml"
+          - ""
+          - "════════════════════════════════════════"

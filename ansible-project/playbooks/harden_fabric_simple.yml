@@ -1,0 +1,88 @@
+---
+- name: "Apply simple Day-2 hardening (fabric: leafs + spines)"
+  hosts: fabric
+  gather_facts: no
+  become: yes
+
+  vars:
+    # Keeping these demo-friendly and easy to tweak from the frontend via extra_vars if needed.
+    trusted_mgmt_subnet: "172.20.20.0/24"
+    syslog_server: "192.168.10.50"
+    ntp_server: "192.168.10.1"
+    idle_timeout_minutes: 15
+    banner_text: |
+      ################################################################
+      #  UNAUTHORIZED ACCESS TO THIS DEVICE IS PROHIBITED            #
+      #  All activities are monitored and recorded.                  #
+      ################################################################
+
+  tasks:
+    - name: Configure warning banner (MOTD)
+      arista.eos.eos_banner:
+        banner: motd
+        text: "{{ banner_text }}"
+        state: present
+
+    - name: Configure management ACL (trusted subnet only)
+      arista.eos.eos_config:
+        parents: "ip access-list standard ACL_MGMT_TRUSTED"
+        lines:
+          - "permit {{ trusted_mgmt_subnet }}"
+          - "deny any log"
+        save_when: modified
+
+    - name: Configure control-plane ACL to restrict eAPI access
+      arista.eos.eos_config:
+        parents: "ip access-list CONTROL_PLANE_EAPI"
+        lines:
+          - "10 permit icmp any any"
+          - "20 permit ip any any tracked"
+          - "30 permit udp any any eq bfd ttl eq 255"
+          - "40 permit udp any any eq bfd-echo ttl eq 254"
+          - "50 permit ospf any any"
+          - "51 permit tcp {{ trusted_mgmt_subnet }} any eq https"
+          - "52 deny tcp any any eq https log"
+          - "60 permit tcp any any eq ssh telnet www snmp bgp msdp"
+          - "70 permit udp any any eq bootps bootpc snmp rip ntp"
+          - "80 permit tcp any any eq mlag ttl eq 255"
+          - "90 permit udp any any eq mlag ttl eq 255"
+          - "100 permit vrrp any any"
+          - "110 permit ahp any any"
+          - "120 permit pim any any"
+          - "130 permit igmp any any"
+        save_when: modified
+
+    - name: Apply control-plane ACL to restrict eAPI (HTTPS port 443)
+      arista.eos.eos_config:
+        parents: "system control-plane"
+        lines:
+          - "ip access-group CONTROL_PLANE_EAPI in"
+        save_when: modified
+
+    - name: Configure timezone + NTP (log accuracy)
+      arista.eos.eos_config:
+        lines:
+          - "clock timezone UTC"
+          - "ntp server {{ ntp_server }}"
+        save_when: modified
+
+    - name: Configure syslog server
+      arista.eos.eos_config:
+        lines:
+          - "logging host {{ syslog_server }}"
+        save_when: modified
+
+    - name: Set idle timeout for console
+      arista.eos.eos_config:
+        parents: "management console"
+        lines:
+          - "idle-timeout {{ idle_timeout_minutes }}"
+        save_when: modified
+
+    - name: Set idle timeout for SSH
+      arista.eos.eos_config:
+        parents: "management ssh"
+        lines:
+          - "idle-timeout {{ idle_timeout_minutes }}"
+        save_when: modified
+

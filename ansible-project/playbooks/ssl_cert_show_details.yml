@@ -1,0 +1,160 @@
+---
+- name: Show SSL Certificate Details
+  hosts: localhost_linux
+  gather_facts: true
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ssl_cert_path: "/etc/nginx/ssl/server.crt"
+    ssl_key_path: "/etc/nginx/ssl/server.key"
+
+  tasks:
+    - name: Check if SSL certificate exists
+      ansible.builtin.stat:
+        path: "{{ ssl_cert_path }}"
+      register: cert_file
+
+    - name: Fail if certificate not found
+      ansible.builtin.fail:
+        msg: "❌ SSL certificate not found at {{ ssl_cert_path }}"
+      when: not cert_file.stat.exists
+
+    - name: Get comprehensive certificate details
+      ansible.builtin.shell: |
+        # Basic certificate information
+        SUBJECT=$(openssl x509 -in {{ ssl_cert_path }} -noout -subject | sed 's/subject=//')
+        ISSUER=$(openssl x509 -in {{ ssl_cert_path }} -noout -issuer | sed 's/issuer=//')
+        SERIAL=$(openssl x509 -in {{ ssl_cert_path }} -noout -serial | cut -d= -f2)
+        
+        # Dates
+        NOT_BEFORE=$(openssl x509 -in {{ ssl_cert_path }} -noout -startdate | cut -d= -f2)
+        NOT_AFTER=$(openssl x509 -in {{ ssl_cert_path }} -noout -enddate | cut -d= -f2)
+        
+        # Calculate days
+        EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        
+        # Get Common Name
+        CN=$(openssl x509 -in {{ ssl_cert_path }} -noout -subject | sed 's/.*CN = //')
+        
+        # Get SAN (Subject Alternative Names)
+        SAN=$(openssl x509 -in {{ ssl_cert_path }} -noout -ext subjectAltName 2>/dev/null | grep -v "X509v3 Subject Alternative Name" | tr -d ' ' || echo "None")
+        
+        # Fingerprints
+        SHA256_FP=$(openssl x509 -in {{ ssl_cert_path }} -noout -fingerprint -sha256 | cut -d= -f2)
+        SHA1_FP=$(openssl x509 -in {{ ssl_cert_path }} -noout -fingerprint -sha1 | cut -d= -f2)
+        
+        # Key algorithm and size
+        KEY_ALG=$(openssl x509 -in {{ ssl_cert_path }} -noout -text | grep "Public Key Algorithm" | cut -d: -f2 | xargs)
+        KEY_SIZE=$(openssl x509 -in {{ ssl_cert_path }} -noout -text | grep "Public-Key:" | sed 's/.*(\([0-9]*\) bit)/\1/')
+        
+        # Signature algorithm
+        SIG_ALG=$(openssl x509 -in {{ ssl_cert_path }} -noout -text | grep "Signature Algorithm" | head -1 | cut -d: -f2 | xargs)
+        
+        # Version
+        VERSION=$(openssl x509 -in {{ ssl_cert_path }} -noout -text | grep "Version:" | cut -d: -f2 | xargs)
+        
+        # Output JSON
+        cat <<EOF
+        {
+          "hostname": "$CN",
+          "ip_address": "{{ ansible_default_ipv4.address }}",
+          "subject": "$SUBJECT",
+          "issuer": "$ISSUER",
+          "serial": "$SERIAL",
+          "valid_from": "$NOT_BEFORE",
+          "valid_until": "$NOT_AFTER",
+          "days_remaining": $DAYS_REMAINING,
+          "common_name": "$CN",
+          "san": "$SAN",
+          "sha256_fingerprint": "$SHA256_FP",
+          "sha1_fingerprint": "$SHA1_FP",
+          "key_algorithm": "$KEY_ALG",
+          "key_size": "$KEY_SIZE",
+          "signature_algorithm": "$SIG_ALG",
+          "version": "$VERSION",
+          "cert_path": "{{ ssl_cert_path }}",
+          "key_path": "{{ ssl_key_path }}"
+        }
+        EOF
+      register: cert_details
+      changed_when: false
+
+    - name: Parse certificate details
+      ansible.builtin.set_fact:
+        cert: "{{ cert_details.stdout | from_json }}"
+
+    - name: Determine certificate status
+      ansible.builtin.set_fact:
+        cert_status: "{{ 'EXPIRED ❌' if cert.days_remaining | int < 0 else ('EXPIRING SOON ⚠️' if cert.days_remaining | int < 7 else 'VALID ✅') }}"
+        status_color: "{{ 'red' if cert.days_remaining | int < 0 else ('yellow' if cert.days_remaining | int < 7 else 'green') }}"
+
+    - name: Get key usage and extended key usage
+      ansible.builtin.shell: |
+        KEY_USAGE=$(openssl x509 -in {{ ssl_cert_path }} -noout -ext keyUsage 2>/dev/null | grep -v "X509v3 Key Usage" | tr -d ' ' || echo "Not specified")
+        EXT_KEY_USAGE=$(openssl x509 -in {{ ssl_cert_path }} -noout -ext extendedKeyUsage 2>/dev/null | grep -v "X509v3 Extended Key Usage" | tr -d ' ' || echo "Not specified")
+        
+        echo "$KEY_USAGE|$EXT_KEY_USAGE"
+      register: key_usage_info
+      changed_when: false
+
+    - name: Parse key usage
+      ansible.builtin.set_fact:
+        key_usage: "{{ key_usage_info.stdout.split('|')[0] }}"
+        ext_key_usage: "{{ key_usage_info.stdout.split('|')[1] }}"
+
+    - name: Display SSL certificate details
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "      SSL CERTIFICATE DETAILS"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Certificate Identity ==="
+          - "Hostname: {{ cert.hostname }}"
+          - "IP Address: {{ cert.ip_address }}"
+          - "Status: {{ cert_status }}"
+          - "Days Until Expiry: {{ cert.days_remaining }} days"
+          - ""
+          - "=== Certificate Information ==="
+          - "Common Name: {{ cert.common_name }}"
+          - "Subject: {{ cert.subject }}"
+          - "Issuer: {{ cert.issuer }}"
+          - "Serial Number: {{ cert.serial }}"
+          - ""
+          - "=== Validity Period ==="
+          - "Valid From: {{ cert.valid_from }}"
+          - "Valid Until: {{ cert.valid_until }}"
+          - ""
+          - "=== Subject Alternative Names ==="
+          - "{{ cert.san }}"
+          - ""
+          - "=== Key & Signature Information ==="
+          - "Public Key Algorithm: {{ cert.key_algorithm }}"
+          - "Key Size: {{ cert.key_size }} bits"
+          - "Signature Algorithm: {{ cert.signature_algorithm }}"
+          - "Certificate Version: {{ cert.version }}"
+          - ""
+          - "=== Key Usage ==="
+          - "Key Usage: {{ key_usage }}"
+          - "Extended Key Usage: {{ ext_key_usage }}"
+          - ""
+          - "=== Fingerprints ==="
+          - "SHA256: {{ cert.sha256_fingerprint }}"
+          - "SHA1: {{ cert.sha1_fingerprint }}"
+          - ""
+          - "=== File Locations ==="
+          - "Certificate: {{ cert.cert_path }}"
+          - "Private Key: {{ cert.key_path }}"
+          - "Owner: root (mode 0644 for cert, 0600 for key)"
+          - ""
+          - "=== Certificate Authority ==="
+          - "Type: HashiCorp Vault PKI Engine"
+          - "Management: Automated (Ansible)"
+          - ""
+          - "════════════════════════════════════════"

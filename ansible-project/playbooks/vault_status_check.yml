@@ -1,0 +1,146 @@
+---
+- name: Check HashiCorp Vault Status and PKI Details
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    vault_addr: "http://127.0.0.1:8200"
+    vault_bin: "/usr/local/bin/vault"
+
+  tasks:
+    - name: Check if Vault is installed
+      ansible.builtin.stat:
+        path: "{{ vault_bin }}"
+      register: vault_binary
+
+    - name: Fail if Vault is not installed
+      ansible.builtin.fail:
+        msg: "[ERROR] Vault is not installed. Please run vault_install_configure.yml first."
+      when: not vault_binary.stat.exists
+
+    - name: Check Vault service status
+      ansible.builtin.systemd:
+        name: vault
+      register: vault_service
+
+    - name: Get Vault status
+      ansible.builtin.shell: |
+        {{ vault_bin }} status -format=json
+      environment:
+        VAULT_ADDR: "{{ vault_addr }}"
+      register: vault_status
+      changed_when: false
+      failed_when: false
+
+    - name: Parse Vault status
+      ansible.builtin.set_fact:
+        vault_status_json: "{{ vault_status.stdout | from_json }}"
+      when: vault_status.rc == 0
+
+    - name: Set empty Vault status when status command fails (avoid template errors)
+      ansible.builtin.set_fact:
+        vault_status_json: {}
+      when: vault_status.rc != 0
+
+    - name: Read Vault credentials
+      ansible.builtin.slurp:
+        src: /root/.vault_init.json
+      register: vault_creds
+      when: vault_status.rc == 0
+
+    - name: Parse Vault credentials
+      ansible.builtin.set_fact:
+        vault_token: "{{ (vault_creds.content | b64decode | from_json).root_token }}"
+      when: vault_creds is defined
+
+    - name: List PKI certificates
+      ansible.builtin.shell: |
+        {{ vault_bin }} list -format=json pki/certs 2>/dev/null || echo "[]"
+      environment:
+        VAULT_ADDR: "{{ vault_addr }}"
+        VAULT_TOKEN: "{{ vault_token }}"
+      register: pki_certs_list
+      changed_when: false
+      when: vault_token is defined
+
+    - name: Parse PKI certificates list
+      ansible.builtin.set_fact:
+        pki_certs: "{{ pki_certs_list.stdout | from_json }}"
+      when: pki_certs_list is defined and pki_certs_list.stdout != ""
+
+    - name: Get PKI role details
+      ansible.builtin.shell: |
+        {{ vault_bin }} read -format=json pki/roles/web-server 2>/dev/null || echo "{}"
+      environment:
+        VAULT_ADDR: "{{ vault_addr }}"
+        VAULT_TOKEN: "{{ vault_token }}"
+      register: pki_role
+      changed_when: false
+      when: vault_token is defined
+
+    - name: Parse PKI role
+      ansible.builtin.set_fact:
+        pki_role_data: "{{ pki_role.stdout | from_json }}"
+      when: pki_role is defined and pki_role.stdout != ""
+
+    - name: Get current SSL certificate details from Nginx
+      ansible.builtin.shell: |
+        openssl x509 -in /etc/nginx/ssl/server.crt -noout -subject -issuer -dates -serial 2>/dev/null || echo "Certificate not found"
+      register: current_cert
+      changed_when: false
+
+    - name: Check Vault Root CA installed in Debian/Ubuntu trust store (if present)
+      ansible.builtin.stat:
+        path: /usr/local/share/ca-certificates/vault_root_ca.crt
+      register: vault_ca_debian
+
+    - name: Check Vault Root CA installed in RHEL/AlmaLinux trust store (if present)
+      ansible.builtin.stat:
+        path: /etc/pki/ca-trust/source/anchors/vault_root_ca.crt
+      register: vault_ca_rhel
+
+    - name: Set Root CA trust store status message
+      ansible.builtin.set_fact:
+        vault_ca_trust_status: >-
+          {% if vault_ca_debian.stat.exists %}
+          [OK] Installed (Debian trust store)
+          {% elif vault_ca_rhel.stat.exists %}
+          [OK] Installed (RHEL trust store)
+          {% else %}
+          [WARNING] Not found in OS trust store
+          {% endif %}
+
+    - name: Display comprehensive Vault status
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "       VAULT STATUS REPORT"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Service Status ==="
+          - "Service State: {{ '[OK] Running' if vault_service.status.ActiveState == 'active' else '[STOPPED] Stopped' }}"
+          - "Vault Address: {{ vault_addr }}"
+          - "Sealed: {{ '[OK] No' if vault_status_json.sealed is defined and not vault_status_json.sealed else '[SEALED] Yes' }}"
+          - "Initialized: {{ '[OK] Yes' if vault_status_json.initialized is defined and vault_status_json.initialized else 'No' }}"
+          - "Version: {{ vault_status_json.version | default('N/A') }}"
+          - ""
+          - "=== PKI Engine Status ==="
+          - "PKI Path: pki/"
+          - "Role: web-server"
+          - "Allowed Domains: {{ pki_role_data.data.allowed_domains | default(['N/A']) | join(', ') }}"
+          - "Max TTL: {{ pki_role_data.data.max_ttl | default('N/A') }}"
+          - "Total Certificates Issued: {{ pki_certs | length if pki_certs is defined else 0 }}"
+          - ""
+          - "=== Current Active Certificate (Nginx) ==="
+          - "{{ current_cert.stdout_lines | join('\n') }}"
+          - ""
+          - "=== Root CA Location ==="
+          - "File: /opt/vault/root_ca.crt"
+          - "System Trust Store: {{ vault_ca_trust_status }}"
+          - ""
+          - "════════════════════════════════════════"

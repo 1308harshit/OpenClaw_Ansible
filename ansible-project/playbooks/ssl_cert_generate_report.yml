@@ -1,0 +1,195 @@
+---
+- name: Generate SSL Certificate HTML Report
+  hosts: localhost_linux
+  gather_facts: true
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ssl_cert_path: "/etc/nginx/ssl/server.crt"
+    ssl_key_path: "/etc/nginx/ssl/server.key"
+    report_dir: "{{ lookup('env', 'ANSIBLE_PROJECT_ROOT') | default('/home/ansible/NERD_clab_topologies/clos-medium/ansible-project', true) }}/reports/ssl_report"
+    report_file: "index.html"
+
+  tasks:
+    - name: Check if SSL certificate exists
+      ansible.builtin.stat:
+        path: "{{ ssl_cert_path }}"
+      register: cert_file
+
+    - name: Fail if certificate not found
+      ansible.builtin.fail:
+        msg: "❌ SSL certificate not found at {{ ssl_cert_path }}"
+      when: not cert_file.stat.exists
+
+    - name: Create report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: '0755'
+      check_mode: no
+
+    - name: Get comprehensive certificate details
+      ansible.builtin.shell: |
+        # Basic certificate information
+        SUBJECT=$(openssl x509 -in {{ ssl_cert_path }} -noout -subject | sed 's/subject=//')
+        ISSUER=$(openssl x509 -in {{ ssl_cert_path }} -noout -issuer | sed 's/issuer=//')
+        SERIAL=$(openssl x509 -in {{ ssl_cert_path }} -noout -serial | cut -d= -f2)
+        
+        # Dates
+        NOT_BEFORE=$(openssl x509 -in {{ ssl_cert_path }} -noout -startdate | cut -d= -f2)
+        NOT_AFTER=$(openssl x509 -in {{ ssl_cert_path }} -noout -enddate | cut -d= -f2)
+        
+        # Calculate days
+        EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        
+        # Determine status
+        if [ $DAYS_REMAINING -lt 0 ]; then
+          STATUS="EXPIRED"
+          STATUS_CLASS="expired"
+        elif [ $DAYS_REMAINING -lt 7 ]; then
+          STATUS="EXPIRING SOON"
+          STATUS_CLASS="expiring-soon"
+        else
+          STATUS="VALID"
+          STATUS_CLASS="valid"
+        fi
+        
+        # Get Common Name
+        CN=$(openssl x509 -in {{ ssl_cert_path }} -noout -subject | sed 's/.*CN = //')
+        
+        # Get SAN (Subject Alternative Names)
+        SAN=$(openssl x509 -in {{ ssl_cert_path }} -noout -ext subjectAltName 2>/dev/null | grep -v "X509v3 Subject Alternative Name" | sed 's/DNS://g' | tr -d ' ' || echo "None")
+        
+        # Fingerprints
+        SHA256_FP=$(openssl x509 -in {{ ssl_cert_path }} -noout -fingerprint -sha256 | cut -d= -f2)
+        
+        # Key algorithm and size
+        KEY_ALG=$(openssl x509 -in {{ ssl_cert_path }} -noout -text | grep "Public Key Algorithm" | cut -d: -f2 | xargs)
+        KEY_SIZE=$(openssl x509 -in {{ ssl_cert_path }} -noout -text | grep "Public-Key:" | sed 's/.*(\([0-9]*\) bit)/\1/')
+        
+        # Signature algorithm
+        SIG_ALG=$(openssl x509 -in {{ ssl_cert_path }} -noout -text | grep "Signature Algorithm" | head -1 | cut -d: -f2 | xargs)
+        
+        # Key usage
+        KEY_USAGE=$(openssl x509 -in {{ ssl_cert_path }} -noout -ext keyUsage 2>/dev/null | grep -v "X509v3 Key Usage" | tr -d ' ' || echo "Not specified")
+        EXT_KEY_USAGE=$(openssl x509 -in {{ ssl_cert_path }} -noout -ext extendedKeyUsage 2>/dev/null | grep -v "X509v3 Extended Key Usage" | tr -d ' ' || echo "Not specified")
+        
+        # Output JSON
+        cat <<EOF
+        {
+          "hostname": "$CN",
+          "ip_address": "{{ ansible_default_ipv4.address }}",
+          "subject": "$SUBJECT",
+          "issuer": "$ISSUER",
+          "serial": "$SERIAL",
+          "valid_from": "$NOT_BEFORE",
+          "valid_until": "$NOT_AFTER",
+          "days_remaining": $DAYS_REMAINING,
+          "status": "$STATUS",
+          "status_class": "$STATUS_CLASS",
+          "common_name": "$CN",
+          "san": "$SAN",
+          "signature_algorithm": "$SIG_ALG",
+          "key_algorithm": "$KEY_ALG",
+          "key_size": "$KEY_SIZE",
+          "key_usage": "$KEY_USAGE",
+          "ext_key_usage": "$EXT_KEY_USAGE"
+        }
+        EOF
+      register: cert_details
+      changed_when: false
+
+    - name: Parse certificate details
+      ansible.builtin.set_fact:
+        cert: "{{ cert_details.stdout | from_json }}"
+
+    - name: Get current timestamp
+      ansible.builtin.set_fact:
+        report_timestamp: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Generate HTML report from template
+      ansible.builtin.template:
+        src: ../templates/ssl_report.html.j2
+        dest: "{{ report_dir }}/{{ report_file }}"
+        mode: '0644'
+      check_mode: no
+      vars:
+        report_domain: "snoopy.timlam007.com"
+        cert_hostname: "{{ cert.hostname }}"
+        cert_ip_address: "{{ cert.ip_address }}"
+        cert_status: "{{ cert.status }}"
+        cert_status_class: "{{ cert.status_class }}"
+        days_until_expiry: "{{ cert.days_remaining }}"
+        cert_common_name: "{{ cert.common_name }}"
+        cert_san: "{{ cert.san }}"
+        cert_issuer: "{{ cert.issuer }}"
+        cert_valid_from: "{{ cert.valid_from }}"
+        cert_valid_until: "{{ cert.valid_until }}"
+        cert_serial: "{{ cert.serial }}"
+        cert_signature_algorithm: "{{ cert.signature_algorithm }}"
+        cert_public_key_algorithm: "{{ cert.key_algorithm }}"
+        cert_key_size: "{{ cert.key_size }}"
+        cert_file_path: "{{ ssl_cert_path }}"
+        key_file_path: "{{ ssl_key_path }}"
+        cert_ca_type: "HashiCorp Vault PKI Engine"
+        cert_key_usage: "{{ cert.key_usage }}"
+        cert_extended_key_usage: "{{ cert.ext_key_usage }}"
+
+    - name: Generate JSON report
+      ansible.builtin.copy:
+        content: |
+          {
+            "report_generated": "{{ report_timestamp }}",
+            "certificate": {
+              "hostname": "{{ cert.hostname }}",
+              "ip_address": "{{ cert.ip_address }}",
+              "common_name": "{{ cert.common_name }}",
+              "subject": "{{ cert.subject }}",
+              "issuer": "{{ cert.issuer }}",
+              "serial_number": "{{ cert.serial }}",
+              "valid_from": "{{ cert.valid_from }}",
+              "valid_until": "{{ cert.valid_until }}",
+              "days_remaining": {{ cert.days_remaining }},
+              "status": "{{ cert.status }}",
+              "san": "{{ cert.san }}",
+              "signature_algorithm": "{{ cert.signature_algorithm }}",
+              "public_key_algorithm": "{{ cert.key_algorithm }}",
+              "key_size": {{ cert.key_size }},
+              "key_usage": "{{ cert.key_usage }}",
+              "extended_key_usage": "{{ cert.ext_key_usage }}",
+              "certificate_path": "{{ ssl_cert_path }}",
+              "private_key_path": "{{ ssl_key_path }}",
+              "certificate_authority": "HashiCorp Vault PKI Engine"
+            }
+          }
+        dest: "{{ report_dir }}/ssl_cert_report.json"
+        mode: '0644'
+      check_mode: no
+
+    - name: Display report generation success
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "  [SUCCESS] SSL CERTIFICATE REPORT GENERATED"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Report Details ==="
+          - "Certificate Status: {{ cert.status }}"
+          - "Days Until Expiry: {{ cert.days_remaining }} days"
+          - ""
+          - "=== Report Files ==="
+          - "HTML Report: {{ report_dir }}/{{ report_file }}"
+          - "JSON Report: {{ report_dir }}/ssl_cert_report.json"
+          - ""
+          - "=== How to View ==="
+          - "The HTML report is automatically served by the frontend."
+          - "Access it via the MCP AI response link or directly at:"
+          - "http://{{ cert.ip_address }}:8000/reports/ssl_report/index.html"
+          - ""
+          - "════════════════════════════════════════"

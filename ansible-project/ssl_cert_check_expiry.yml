@@ -1,0 +1,119 @@
+---
+- name: Check SSL Certificate Expiry Date
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ssl_cert_path: "/etc/nginx/ssl/server.crt"
+
+  tasks:
+    - name: Check if SSL certificate exists
+      ansible.builtin.stat:
+        path: "{{ ssl_cert_path }}"
+      register: cert_file
+
+    - name: Fail if certificate not found
+      ansible.builtin.fail:
+        msg: "[ERROR] SSL certificate not found at {{ ssl_cert_path }}. Please run vault_install_configure.yml first."
+      when: not cert_file.stat.exists
+
+    - name: Get certificate expiry information
+      ansible.builtin.shell: |
+        # Get certificate dates
+        NOT_BEFORE=$(openssl x509 -in {{ ssl_cert_path }} -noout -startdate | cut -d= -f2)
+        NOT_AFTER=$(openssl x509 -in {{ ssl_cert_path }} -noout -enddate | cut -d= -f2)
+        
+        # Get certificate subject
+        SUBJECT=$(openssl x509 -in {{ ssl_cert_path }} -noout -subject | sed 's/subject=//')
+        
+        # Get certificate issuer
+        ISSUER=$(openssl x509 -in {{ ssl_cert_path }} -noout -issuer | sed 's/issuer=//')
+        
+        # Calculate days until expiry
+        EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        
+        # Determine status
+        if [ $DAYS_REMAINING -lt 0 ]; then
+          STATUS="[ERROR] EXPIRED"
+          STATUS_COLOR="red"
+        elif [ $DAYS_REMAINING -lt 7 ]; then
+          STATUS="[WARNING] EXPIRING SOON"
+          STATUS_COLOR="yellow"
+        else
+          STATUS="[OK] VALID"
+          STATUS_COLOR="green"
+        fi
+        
+        # Output JSON
+        cat <<EOF
+        {
+          "valid_from": "$NOT_BEFORE",
+          "valid_until": "$NOT_AFTER",
+          "subject": "$SUBJECT",
+          "issuer": "$ISSUER",
+          "days_remaining": $DAYS_REMAINING,
+          "status": "$STATUS",
+          "status_color": "$STATUS_COLOR"
+        }
+        EOF
+      register: cert_info
+      changed_when: false
+
+    - name: Parse certificate information
+      ansible.builtin.set_fact:
+        cert_data: "{{ cert_info.stdout | from_json }}"
+
+    - name: Get certificate serial number
+      ansible.builtin.shell: |
+        openssl x509 -in {{ ssl_cert_path }} -noout -serial | cut -d= -f2
+      register: cert_serial
+      changed_when: false
+
+    - name: Get certificate fingerprint
+      ansible.builtin.shell: |
+        openssl x509 -in {{ ssl_cert_path }} -noout -fingerprint -sha256 | cut -d= -f2
+      register: cert_fingerprint
+      changed_when: false
+
+    - name: Display certificate expiry information
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "     SSL CERTIFICATE EXPIRY CHECK"
+          - "════════════════════════════════════════"
+          - ""
+          - "[INFO] Certificate: {{ ssl_cert_path }}"
+          - ""
+          - "=== Certificate Status ==="
+          - "Status: {{ cert_data.status }}"
+          - "Days Until Expiry: {{ cert_data.days_remaining }} days"
+          - ""
+          - "=== Validity Period ==="
+          - "Valid From: {{ cert_data.valid_from }}"
+          - "Valid Until: {{ cert_data.valid_until }}"
+          - ""
+          - "=== Certificate Identity ==="
+          - "Subject: {{ cert_data.subject }}"
+          - "Issuer: {{ cert_data.issuer }}"
+          - "Serial: {{ cert_serial.stdout }}"
+          - ""
+          - "=== Fingerprint ==="
+          - "SHA256: {{ cert_fingerprint.stdout }}"
+          - ""
+          - "════════════════════════════════════════"
+          - ""
+          - "{% if cert_data.days_remaining < 0 %}[ERROR] ACTION REQUIRED: Certificate has EXPIRED! Run ssl_cert_deploy_new.yml to renew.{% elif cert_data.days_remaining < 7 %}[WARNING] Certificate expires in {{ cert_data.days_remaining }} days. Consider renewal soon.{% else %}[OK] Certificate is valid and healthy.{% endif %}"
+          - ""
+
+    - name: Set fact for automation
+      ansible.builtin.set_fact:
+        certificate_expired: "{{ cert_data.days_remaining < 0 }}"
+        certificate_expiring_soon: "{{ cert_data.days_remaining < 7 and cert_data.days_remaining >= 0 }}"
+        certificate_days_remaining: "{{ cert_data.days_remaining }}"

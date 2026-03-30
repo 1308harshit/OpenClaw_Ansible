@@ -1,0 +1,80 @@
+---
+- name: Generate interface status report from all devices
+  hosts: all_devices
+  gather_facts: no
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+    raw_dir: "{{ reports_dir }}/interfaces_raw"
+    summary_dir: "{{ reports_dir }}/interfaces_summary"
+  
+  tasks:
+    - name: Create report directories if they don't exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ raw_dir }}"
+        - "{{ summary_dir }}"
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Get interface status from device
+      arista.eos.eos_command:
+        commands:
+          - show interfaces status
+      register: interface_status
+    
+    - name: Get current timestamp
+      ansible.builtin.shell: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+    
+    - name: Save raw interface output per device
+      ansible.builtin.copy:
+        content: |
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+          
+          {{ interface_status.stdout[0] }}
+        dest: "{{ raw_dir }}/{{ inventory_hostname }}_interfaces_raw.txt"
+        mode: '0644'
+      delegate_to: localhost
+    
+    # Filter valid interface lines once (avoid counting headers like 'Duplex')
+    - name: Extract interface lines
+      ansible.builtin.set_fact:
+        iface_lines: >-
+          {{
+            interface_status.stdout_lines[0]
+            | select('match', '^(Et|Ma|Lo)')
+            | list
+          }}
+
+    - name: Count interfaces by state (corrected)
+      ansible.builtin.set_fact:
+        interface_counts:
+          total: "{{ iface_lines | length }}"
+          up: "{{ iface_lines | select('search', ' connected ') | list | length }}"
+          down: "{{ iface_lines | select('search', '(notconnect|disabled| down )') | list | length }}"
+    
+    - name: Save per-device summary
+      ansible.builtin.copy:
+        content: |
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+          
+          Interface Summary:
+          - Total Interfaces: {{ interface_counts.total }}
+          - Interfaces UP: {{ interface_counts.up }}
+          - Interfaces DOWN: {{ interface_counts.down }}
+        dest: "{{ summary_dir }}/{{ inventory_hostname }}_summary.txt"
+        mode: '0644'
+      delegate_to: localhost
+    
+    - name: Display summary
+      ansible.builtin.debug:
+        msg: "Interface report saved for {{ inventory_hostname }} - Total: {{ interface_counts.total }}, UP: {{ interface_counts.up }}, DOWN: {{ interface_counts.down }}"
+

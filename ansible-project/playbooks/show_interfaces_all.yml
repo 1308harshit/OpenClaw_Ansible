@@ -1,0 +1,44 @@
+---
+- name: Show all interfaces from all devices
+  hosts: all_devices
+  gather_facts: no
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+  
+  tasks:
+    - name: Create reports directory if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Get all interfaces information
+      arista.eos.eos_command:
+        commands:
+          - show interfaces status
+      register: interfaces_result
+    
+    - name: Get current timestamp
+      ansible.builtin.shell: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+    
+    - name: Save interfaces report to file
+      ansible.builtin.copy:
+        content: |
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+          
+          {{ interfaces_result.stdout[0] }}
+        dest: "{{ reports_dir }}/{{ inventory_hostname }}_interfaces_all.txt"
+        mode: '0644'
+      delegate_to: localhost
+    
+    - name: Display summary
+      ansible.builtin.debug:
+        msg: "Interfaces report saved to {{ reports_dir }}/{{ inventory_hostname }}_interfaces_all.txt"
+

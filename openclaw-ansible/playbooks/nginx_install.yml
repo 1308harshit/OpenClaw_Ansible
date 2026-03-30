@@ -1,0 +1,46 @@
+---
+# Nginx Installation Playbook
+# Installs Nginx and starts the service
+# No SSL, no web root, no templates
+
+- name: Install Nginx
+  hosts: openclaw
+  become: yes
+  vars_files:
+    - ../vars.yml
+
+  tasks:
+    - name: Check if Nginx is already installed
+      command: nginx -v
+      register: nginx_check
+      failed_when: false
+      changed_when: false
+
+    - name: Display current Nginx version if installed
+      debug:
+        msg: "Nginx {{ nginx_check.stderr }} is already installed"
+      when: nginx_check.rc == 0
+
+    - name: Install Nginx using dnf
+      dnf:
+        name: nginx
+        state: present
+      when: nginx_check.rc != 0
+
+    - name: Enable and start Nginx service
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      when: nginx_check.rc != 0
+
+    - name: Verify Nginx is running
+      command: systemctl status nginx
+      register: nginx_status
+      changed_when: false
+
+    - name: Display status
+      debug:
+        msg: |
+          [OK] Nginx installed and running successfully
+          {{ nginx_status.stdout }}
