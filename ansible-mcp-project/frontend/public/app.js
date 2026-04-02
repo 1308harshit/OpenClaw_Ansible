@@ -47,6 +47,12 @@ loadConfig();
 updateHKTTime();
 setInterval(updateHKTTime, 1000); // Update every second
 
+// Clear button handler
+document.getElementById("clear-btn").addEventListener("click", () => {
+  document.getElementById("q").value = "";
+  document.getElementById("q").focus();
+});
+
 // History button handler
 document.getElementById("history-btn").addEventListener("click", () => {
   window.location.href = "/history";
@@ -71,14 +77,39 @@ go.addEventListener("click", async () => {
   const text = (q.value || "").trim();
   if (!text) return;
 
-  out.textContent = "Running...";
+  // Get current HKT timestamp
+  const now = new Date();
+  const hktTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Hong_Kong" }));
+  
+  const hours = String(hktTime.getHours()).padStart(2, '0');
+  const minutes = String(hktTime.getMinutes()).padStart(2, '0');
+  const seconds = String(hktTime.getSeconds()).padStart(2, '0');
+  const timeString = `${hours}:${minutes}:${seconds}`;
+  
+  const dateString = hktTime.toLocaleDateString("en-GB", {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: "Asia/Hong_Kong"
+  });
+
+  // Format the query header
+  const queryHeader = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 Query: "${text}"
+🕐 Time: ${timeString}, ${dateString} (HKT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+`;
+
+  out.textContent = queryHeader + "Running...";
   go.disabled = true;
 
   try {
     const resultText = await runQuery(text);
-    out.textContent = resultText;
+    out.textContent = queryHeader + resultText;
   } catch (e) {
-    out.textContent = String(e);
+    out.textContent = queryHeader + String(e);
   } finally {
     go.disabled = false;
   }

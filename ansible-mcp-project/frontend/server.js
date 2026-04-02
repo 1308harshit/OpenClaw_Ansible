@@ -378,7 +378,7 @@ function startMcpProcess() {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error(`MCP timeout waiting for id=${id}`));
-      }, 60_000);
+      }, 300_000); // 5 minutes timeout for long-running playbooks
 
       pending.set(id, {
         resolve: (msg) => {
@@ -539,10 +539,27 @@ app.get("/api/history", async (req, res) => {
   try {
     const history = await historyCollection
       .find({})
-      .sort({ timestamp: -1 })
+      .sort({ timestamp: -1 })  // Latest first
       .limit(100)
       .toArray();
     res.json(history);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API endpoint to delete all history
+app.delete("/api/history", async (req, res) => {
+  if (!historyCollection) {
+    return res.status(503).json({ error: "History feature not available" });
+  }
+  
+  try {
+    const result = await historyCollection.deleteMany({});
+    res.json({ 
+      message: `Deleted ${result.deletedCount} history records`,
+      deletedCount: result.deletedCount
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

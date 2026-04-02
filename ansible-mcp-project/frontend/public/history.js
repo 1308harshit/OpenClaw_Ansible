@@ -103,6 +103,28 @@ function searchHistory() {
   displayHistory(filtered);
 }
 
+async function deleteAllHistory() {
+  if (!confirm("Are you sure you want to delete ALL query history? This cannot be undone.")) {
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/history", {
+      method: "DELETE"
+    });
+    
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
+    const result = await res.json();
+    alert(`✅ ${result.message || 'All history deleted successfully!'}`);
+    
+    // Reload history
+    await loadHistory();
+  } catch (e) {
+    alert(`❌ Failed to delete history: ${e.message}`);
+  }
+}
+
 // Event listeners
 document.getElementById("search-btn").addEventListener("click", searchHistory);
 document.getElementById("search-input").addEventListener("keypress", (e) => {
@@ -112,6 +134,7 @@ document.getElementById("clear-btn").addEventListener("click", () => {
   document.getElementById("search-input").value = "";
   displayHistory(allHistory);
 });
+document.getElementById("delete-all-btn").addEventListener("click", deleteAllHistory);
 
 // Load history on page load
 loadHistory();

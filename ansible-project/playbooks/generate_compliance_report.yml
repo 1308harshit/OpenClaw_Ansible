@@ -1,5 +1,5 @@
 ---
-- name: Generate compliance report (HTML) for EOS devices
+- name: Generate Network Compliance Report (HTML) for EOS devices
   hosts: fabric:routers
   gather_facts: no
 
@@ -10,7 +10,7 @@
     json_file: "{{ compliance_dir }}/compliance_report.json"
 
   tasks:
-    - name: Create compliance report directory
+    - name: Create Network Compliance Report directory
       ansible.builtin.file:
         path: "{{ compliance_dir }}"
         state: directory
@@ -107,7 +107,7 @@
       changed_when: false
       check_mode: no
 
-    - name: Write compliance report (JSON)
+    - name: Write Network Compliance Report (JSON)
       ansible.builtin.copy:
         dest: "{{ json_file }}"
         mode: "0644"
@@ -116,7 +116,7 @@
       run_once: true
       check_mode: no
 
-    - name: Generate compliance report (HTML)
+    - name: Generate Network Compliance Report (HTML)
       ansible.builtin.copy:
         dest: "{{ dashboard_file }}"
         mode: "0644"
@@ -125,7 +125,7 @@
           <html>
           <head>
             <meta charset="UTF-8">
-            <title>Compliance Report</title>
+            <title>Network Compliance Report</title>
             <style>
               body { font-family: Arial, sans-serif; background: #f4f6f8; padding: 20px; }
               h1 { margin-bottom: 6px; }
@@ -139,7 +139,7 @@
             </style>
           </head>
           <body>
-            <h1>Compliance Report</h1>
+            <h1>Network Compliance Report</h1>
             <div class="meta">
               Generated: <span class="pill">{{ timestamp_result.stdout }}</span>
               &nbsp; | &nbsp; Source: <code>fabric:routers</code>

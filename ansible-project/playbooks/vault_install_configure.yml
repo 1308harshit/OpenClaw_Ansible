@@ -89,11 +89,11 @@
           }
           
           listener "tcp" {
-            address     = "127.0.0.1:8200"
-            tls_disable = 1
+          address     = "0.0.0.0:8200"
+          tls_disable = 1
           }
-          
-          api_addr = "http://127.0.0.1:8200"
+
+          api_addr = "http://100.30.182.96:8200"
         dest: "{{ vault_config_dir }}/vault.hcl"
         owner: "{{ vault_service_user }}"
         group: "{{ vault_service_user }}"
@@ -328,3 +328,4 @@
           - "Initial SSL Certificate: /etc/nginx/ssl/server.crt"
           - "Root Token saved at: /root/.vault_init.json"
           - "PKI engine enabled with role: web-server"
+          
