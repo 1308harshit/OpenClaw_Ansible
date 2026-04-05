@@ -1,0 +1,38 @@
+---
+- name: Remove daily SSL certificate expiry alert (cron)
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    alert_script_path: "/usr/local/bin/ssl-cert-expiry-alert.sh"
+    cron_file_path: "/etc/cron.d/ssl-cert-expiry-alert"
+    alert_log_path: "/var/log/ssl_cert_alert.log"
+
+  tasks:
+    - name: Remove cron entry
+      ansible.builtin.file:
+        path: "{{ cron_file_path }}"
+        state: absent
+
+    - name: Remove wrapper script
+      ansible.builtin.file:
+        path: "{{ alert_script_path }}"
+        state: absent
+
+    - name: Remove alert log file (if present)
+      ansible.builtin.file:
+        path: "{{ alert_log_path }}"
+        state: absent
+
+    - name: Display removal summary
+      ansible.builtin.debug:
+        msg:
+          - "[OK] SSL certificate expiry alert schedule removed."
+          - "Cron: {{ cron_file_path }}"
+          - "Script: {{ alert_script_path }}"
+

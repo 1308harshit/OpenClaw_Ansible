@@ -1,0 +1,123 @@
+---
+- name: Make SSL Certificate Expire (Demo Trick)
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ssl_cert_path: "/etc/nginx/ssl/server.crt"
+    ssl_key_path: "/etc/nginx/ssl/server.key"
+    expired_cert_path: "/etc/nginx/ssl/expired_demo_cert.crt"
+    expired_key_path: "/etc/nginx/ssl/expired_demo_cert.key"
+    backup_cert_path: "/etc/nginx/ssl/server.crt.backup"
+    backup_key_path: "/etc/nginx/ssl/server.key.backup"
+
+  tasks:
+    - name: Check if current certificate exists
+      ansible.builtin.stat:
+        path: "{{ ssl_cert_path }}"
+      register: current_cert
+
+    - name: Fail if certificate not found
+      ansible.builtin.fail:
+        msg: "[ERROR] Current SSL certificate not found. Please run vault_install_configure.yml first."
+      when: not current_cert.stat.exists
+
+    - name: Backup current valid certificate
+      ansible.builtin.copy:
+        src: "{{ ssl_cert_path }}"
+        dest: "{{ backup_cert_path }}"
+        remote_src: yes
+        mode: '0644'
+
+    - name: Backup current private key
+      ansible.builtin.copy:
+        src: "{{ ssl_key_path }}"
+        dest: "{{ backup_key_path }}"
+        remote_src: yes
+        mode: '0600'
+
+    - name: Check if pre-expired certificate exists
+      ansible.builtin.stat:
+        path: "{{ expired_cert_path }}"
+      register: expired_cert
+
+    - name: Generate expired certificate if not exists
+      ansible.builtin.shell: |
+        # Create a certificate that expired yesterday
+        openssl req -x509 -newkey rsa:2048 -nodes \
+          -keyout {{ expired_key_path }} \
+          -out {{ expired_cert_path }} \
+          -days 1 \
+          -subj "/C=US/ST=Demo/O=ExpiredDemo/CN=snoopy.timlam007.com"
+        
+        # Backdate the certificate to 2020 by modifying file timestamp
+        touch -t 202001010000 {{ expired_cert_path }}
+      when: not expired_cert.stat.exists
+
+    - name: Replace current certificate with expired one
+      ansible.builtin.copy:
+        src: "{{ expired_cert_path }}"
+        dest: "{{ ssl_cert_path }}"
+        remote_src: yes
+        mode: '0644'
+        force: yes
+
+    - name: Replace current key with expired one
+      ansible.builtin.copy:
+        src: "{{ expired_key_path }}"
+        dest: "{{ ssl_key_path }}"
+        remote_src: yes
+        mode: '0600'
+        force: yes
+
+    - name: Test Nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Reload Nginx to apply expired certificate
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_test.rc == 0
+
+    - name: Verify certificate is now expired
+      ansible.builtin.shell: |
+        NOT_AFTER=$(openssl x509 -in {{ ssl_cert_path }} -noout -enddate | cut -d= -f2)
+        EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        echo $DAYS_REMAINING
+      register: days_check
+      changed_when: false
+
+    - name: Display demo trick result
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "   [DEMO] DEMO TRICK EXECUTED SUCCESSFULLY"
+          - "════════════════════════════════════════"
+          - ""
+          - "[OK] Current valid certificate backed up to:"
+          - "   • {{ backup_cert_path }}"
+          - "   • {{ backup_key_path }}"
+          - ""
+          - "[WARNING] Nginx is now serving an EXPIRED certificate!"
+          - "   • Days until expiry: {{ days_check.stdout }} (negative = expired)"
+          - ""
+          - "[INFO] Next Steps for Demo:"
+          - "   1. Run: ssl_cert_check_expiry.yml"
+          - "      → Will show certificate as EXPIRED"
+          - ""
+          - "   2. Run: ssl_cert_deploy_new.yml"
+          - "      → Will auto-renew from Vault and fix the issue"
+          - ""
+          - "   3. Run: ssl_cert_rollback.yml (optional)"
+          - "      → Will restore the original valid certificate"
+          - ""
+          - "════════════════════════════════════════"

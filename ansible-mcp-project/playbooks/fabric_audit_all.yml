@@ -1,0 +1,28 @@
+---
+# Fabric Audit Orchestrator
+# Runs all fabric audit steps in sequence:
+#   1. Show all interfaces
+#   2. Detect unused ports
+#   3. Check VLAN consistency
+#   4. Apply baseline hardening
+#   5. Generate compliance HTML report
+#
+# Usage:
+#   ansible-playbook playbooks/fabric_audit_all.yml
+#   ansible-playbook playbooks/fabric_audit_all.yml --limit leafs
+#   ansible-playbook playbooks/fabric_audit_all.yml --check   (dry-run)
+
+- name: "Step 1 — Show all interfaces"
+  ansible.builtin.import_playbook: show_interfaces_all.yml
+
+- name: "Step 2 — Detect unused ports"
+  ansible.builtin.import_playbook: show_unused_ports.yml
+
+- name: "Step 3 — Check VLAN consistency"
+  ansible.builtin.import_playbook: check_vlan_consistency.yml
+
+- name: "Step 4 — Apply baseline hardening"
+  ansible.builtin.import_playbook: harden_fabric_simple.yml
+
+- name: "Step 5 — Generate fabric compliance report"
+  ansible.builtin.import_playbook: generate_fabric_compliance_report.yml

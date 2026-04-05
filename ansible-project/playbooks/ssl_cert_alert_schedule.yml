@@ -1,0 +1,71 @@
+---
+- name: Install daily SSL certificate expiry alert (cron)
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    expiry_threshold_days: 3
+    cron_hour: "9"
+    cron_minute: "0"
+    alert_script_path: "/usr/local/bin/ssl-cert-expiry-alert.sh"
+    cron_file_path: "/etc/cron.d/ssl-cert-expiry-alert"
+    alert_log_path: "/var/log/ssl_cert_alert.log"
+    ansible_project_root: "{{ playbook_dir | dirname }}"
+
+  tasks:
+    - name: Install wrapper script for cron (runs Ansible alert playbook)
+      ansible.builtin.copy:
+        dest: "{{ alert_script_path }}"
+        mode: "0755"
+        owner: root
+        group: root
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          PROJECT_ROOT="{{ ansible_project_root }}"
+          ANSIBLE_PLAYBOOK="$(command -v ansible-playbook || true)"
+
+          if [ -z "${ANSIBLE_PLAYBOOK}" ]; then
+            echo "[ERROR] ansible-playbook not found in PATH"
+            exit 2
+          fi
+
+          cd "${PROJECT_ROOT}"
+          "${ANSIBLE_PLAYBOOK}" -i inventory/inventory.yml playbooks/ssl_cert_alert_expiring.yml \
+            -e "expiry_threshold_days=${EXPIRY_THRESHOLD_DAYS:-{{ expiry_threshold_days }}}"
+
+    - name: Ensure alert log file exists
+      ansible.builtin.file:
+        path: "{{ alert_log_path }}"
+        state: touch
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install cron entry (daily)
+      ansible.builtin.copy:
+        dest: "{{ cron_file_path }}"
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          SHELL=/bin/bash
+          PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          EXPIRY_THRESHOLD_DAYS={{ expiry_threshold_days }}
+          {{ cron_minute }} {{ cron_hour }} * * * root {{ alert_script_path }} >> {{ alert_log_path }} 2>&1
+
+    - name: Display alert scheduling summary
+      ansible.builtin.debug:
+        msg:
+          - "[SUCCESS] Daily SSL certificate expiry alert scheduled."
+          - "Threshold: {{ expiry_threshold_days }} days"
+          - "Cron: {{ cron_minute }} {{ cron_hour }} * * * (server local time)"
+          - "Script: {{ alert_script_path }}"
+          - "Log: {{ alert_log_path }}"
+

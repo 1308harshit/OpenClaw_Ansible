@@ -1,0 +1,38 @@
+---
+- name: Stop Nginx Service
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+
+  tasks:
+    - name: Check if Nginx service exists
+      ansible.builtin.command: systemctl list-unit-files nginx.service
+      register: nginx_service_check
+      changed_when: false
+      failed_when: false
+
+    - name: Stop Nginx service
+      ansible.builtin.systemd:
+        name: nginx
+        state: stopped
+      register: nginx_stop
+      when: nginx_service_check.rc == 0
+
+    - name: Display status (if stopped)
+      ansible.builtin.debug:
+        msg:
+          - "[STOPPED] Nginx service stopped successfully!"
+          - "HTTPS service is now offline"
+      when: nginx_service_check.rc == 0 and nginx_stop is defined
+
+    - name: Display status (if not installed)
+      ansible.builtin.debug:
+        msg:
+          - "[SKIP] Nginx service not found (already removed or not installed)"
+      when: nginx_service_check.rc != 0

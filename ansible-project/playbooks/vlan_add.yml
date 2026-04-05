@@ -1,0 +1,38 @@
+---
+- name: Add VLANs 100 and 200 to leaf switches
+  hosts: leafs
+  gather_facts: no
+  vars:
+    vlans:
+      - vlan_id: 100
+        name: VLAN_100
+      - vlan_id: 200
+        name: VLAN_200
+  
+  tasks:
+    - name: Add VLANs to leaf switches
+      arista.eos.eos_vlans:
+        config:
+          - vlan_id: "{{ item.vlan_id }}"
+            name: "{{ item.name }}"
+        state: merged
+      loop: "{{ vlans }}"
+      register: vlan_result
+    
+    - name: Display VLAN creation result
+      ansible.builtin.debug:
+        msg: "VLAN {{ item.item.vlan_id }} ({{ item.item.name }}) status updated on {{ inventory_hostname }}"
+      loop: "{{ vlan_result.results }}"
+      when: item.changed | default(false)
+  
+  post_tasks:
+    - name: Verify VLANs exist on device
+      arista.eos.eos_command:
+        commands:
+          - show vlan
+      register: vlan_verify
+    
+    - name: Display verification result
+      ansible.builtin.debug:
+        var: vlan_verify.stdout_lines
+

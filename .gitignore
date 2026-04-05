@@ -1,0 +1,66 @@
+# Ansible
+*.retry
+*.log
+*.nohup.log
+
+# SSH Keys
+*.pem
+*.key
+
+# Environment variables
+.env
+.env.local
+.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+*.pyc
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Temporary files
+*.tmp
+*.bak
+*.tar.gz
+*.zip
+
+# Ansible output files
+*_config_backup_*.txt
+*_interfaces_*.txt
+*_summary.txt
+*_users.txt
+compliance_report.json
+
+# Large binary files
+*.tar
+clab-clos-medium/
+
+# MongoDB
+*.mongodb
+
+# Backup files
+*.bak
+mcp_server.py.bak
+server.js.bak
+server.js.backup

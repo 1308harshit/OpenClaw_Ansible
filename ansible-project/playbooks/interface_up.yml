@@ -1,0 +1,26 @@
+---
+- name: Bring interface up on a leaf switch
+  hosts: leaf1
+  gather_facts: no
+
+  vars:
+    interface_name: Ethernet10
+
+  tasks:
+    - name: Enable interface
+      arista.eos.eos_config:
+        lines:
+          - no shutdown
+        parents:
+          - interface {{ interface_name }}
+      diff: false
+
+    - name: Confirm interface is up
+      arista.eos.eos_command:
+        commands:
+          - "show interfaces {{ interface_name }} status"
+      register: interface_output
+
+    - name: Display interface status
+      ansible.builtin.debug:
+        msg: "{{ interface_output.stdout[0] }}"

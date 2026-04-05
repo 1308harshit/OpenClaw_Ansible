@@ -1,0 +1,31 @@
+---
+- name: Install and start PostgreSQL (localhost)
+  hosts: localhost
+  gather_facts: true
+  become: true
+
+  vars:
+    pg_data_dir: /var/lib/pgsql/data
+
+  tasks:
+    - name: Install PostgreSQL packages (RHEL/AlmaLinux)
+      ansible.builtin.package:
+        name:
+          - postgresql
+          - postgresql-server
+        state: present
+
+    - name: Initialize PostgreSQL database if needed (creates PG_VERSION)
+      ansible.builtin.command: postgresql-setup --initdb
+      args:
+        creates: "{{ pg_data_dir }}/PG_VERSION"
+      when: not ansible_check_mode
+
+    - name: Enable and start PostgreSQL service
+      ansible.builtin.service:
+        name: postgresql
+        enabled: true
+        state: started
+      when: not ansible_check_mode
+
+

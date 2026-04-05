@@ -1,0 +1,57 @@
+---
+- name: Check Nginx Service Status
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+
+  tasks:
+    - name: Check Nginx service status
+      ansible.builtin.systemd:
+        name: nginx
+      register: nginx_service
+
+    - name: Get Nginx process information
+      ansible.builtin.shell: |
+        ps aux | grep nginx | grep -v grep || echo "No nginx processes found"
+      register: nginx_processes
+      changed_when: false
+
+    - name: Test HTTPS endpoint locally
+      ansible.builtin.uri:
+        url: https://localhost/health
+        validate_certs: no
+        return_content: yes
+      register: https_test
+      failed_when: false
+
+    - name: Get SSL certificate expiry date
+      ansible.builtin.shell: |
+        openssl x509 -enddate -noout -in /etc/nginx/ssl/server.crt 2>/dev/null || echo "Certificate not found"
+      register: cert_expiry
+      changed_when: false
+
+    - name: Display Nginx status
+      ansible.builtin.debug:
+        msg:
+          - "=== Nginx Service Status ==="
+          - "Status: {{ '[OK] Running' if nginx_service.status.ActiveState == 'active' else '[STOPPED] Stopped' }}"
+          - "Active State: {{ nginx_service.status.ActiveState }}"
+          - "Sub State: {{ nginx_service.status.SubState }}"
+          - "Enabled: {{ 'Yes' if nginx_service.status.UnitFileState == 'enabled' else 'No' }}"
+          - ""
+          - "=== HTTPS Health Check ==="
+          - "Endpoint: https://localhost/health"
+          - "Status Code: {{ https_test.status | default('Failed') }}"
+          - "Response: {{ https_test.content | default('N/A') }}"
+          - ""
+          - "=== SSL Certificate ==="
+          - "{{ cert_expiry.stdout }}"
+          - ""
+          - "=== Nginx Processes ==="
+          - "{{ nginx_processes.stdout_lines | join('\n') }}"

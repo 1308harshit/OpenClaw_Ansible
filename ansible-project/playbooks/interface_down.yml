@@ -1,0 +1,29 @@
+---
+- name: Bring interface down on a leaf switch
+  hosts: leaf1
+  gather_facts: no
+
+  vars:
+    # example: Ethernet1 will down interface for leaf1 and leaf2
+    # follow md: 
+    interface_name: Ethernet10
+
+  tasks:
+    - name: Shutdown interface
+      arista.eos.eos_config:
+        lines:
+          - shutdown
+        parents:
+          - interface {{ interface_name }}
+      diff: false
+      no_log: false
+
+    - name: Confirm interface is down
+      arista.eos.eos_command:
+        commands:
+          - "show interfaces {{ interface_name }} status"
+      register: interface_output
+
+    - name: Display interface status
+      ansible.builtin.debug:
+        msg: "{{ interface_output.stdout[0] }}"

@@ -1,0 +1,23 @@
+# Documentation files (Word documents)
+docs/*.docx
+docs/*.doc
+
+# Backup files
+backups/
+backups/*.txt
+
+# Report files
+reports/
+reports/**/*.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Ansible retry files
+*.retry
+
+# OS files
+.DS_Store
+Thumbs.db

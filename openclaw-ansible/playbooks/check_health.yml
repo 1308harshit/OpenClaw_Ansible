@@ -1,0 +1,65 @@
+---
+# Server Health Check Playbook
+# Collects and displays system resource usage
+
+- name: Check Server Health
+  hosts: openclaw
+  become: yes
+  vars_files:
+    - ../vars.yml
+  
+  tasks:
+    # ============================================
+    # Collect system metrics
+    # ============================================
+    - name: Get disk usage
+      command: df -h
+      register: disk_usage
+      changed_when: false
+
+    - name: Get memory usage
+      command: free -h
+      register: memory_usage
+      changed_when: false
+
+    - name: Get CPU load and uptime
+      command: uptime
+      register: cpu_load
+      changed_when: false
+
+    - name: Get OpenClaw status (if installed)
+      command: openclaw --version
+      register: openclaw_status
+      ignore_errors: yes
+      changed_when: false
+      become: no
+
+    # ============================================
+    # Display formatted health summary
+    # ============================================
+    - name: Display health check summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║           SERVER HEALTH CHECK REPORT                       ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          [INFO] DISK USAGE:
+          {{ disk_usage.stdout }}
+          
+          [INFO] MEMORY USAGE:
+          {{ memory_usage.stdout }}
+          
+          [INFO] CPU LOAD & UPTIME:
+          {{ cpu_load.stdout }}
+          
+          [INFO] OPENCLAW STATUS:
+          {% if openclaw_status.rc == 0 %}
+          [OK] Installed - Version {{ openclaw_status.stdout }}
+          {% else %}
+          [ERROR] Not installed or not accessible
+          {% endif %}
+          
+          ╔════════════════════════════════════════════════════════════╗
+          ║           END OF HEALTH CHECK                              ║
+          ╚════════════════════════════════════════════════════════════╝

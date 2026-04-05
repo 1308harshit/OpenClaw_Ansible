@@ -1,0 +1,117 @@
+---
+- name: Uninstall Nginx and Remove All Configuration
+  hosts: localhost_linux
+  gather_facts: true
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    web_root: "/var/www/timlam007"
+    ssl_dir: "/etc/nginx/ssl"
+
+  tasks:
+    - name: Stop Nginx service
+      ansible.builtin.systemd:
+        name: nginx
+        state: stopped
+      failed_when: false
+
+    - name: Disable Nginx service
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: no
+      failed_when: false
+
+    - name: Remove Nginx package (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name: nginx
+        state: absent
+        purge: yes
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Remove Nginx package (RHEL/AlmaLinux)
+      ansible.builtin.dnf:
+        name: nginx
+        state: absent
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Remove Nginx configuration directory
+      ansible.builtin.file:
+        path: /etc/nginx
+        state: absent
+
+    - name: Remove SSL certificates directory
+      ansible.builtin.file:
+        path: "{{ ssl_dir }}"
+        state: absent
+
+    - name: Remove web root directory
+      ansible.builtin.file:
+        path: "{{ web_root }}"
+        state: absent
+
+    - name: Remove Nginx log directory
+      ansible.builtin.file:
+        path: /var/log/nginx
+        state: absent
+
+    - name: Remove Nginx cache/runtime directory
+      ansible.builtin.file:
+        path: /var/cache/nginx
+        state: absent
+
+    - name: Remove Nginx lib directory
+      ansible.builtin.file:
+        path: /var/lib/nginx
+        state: absent
+
+    - name: Remove Nginx user (if exists)
+      ansible.builtin.user:
+        name: nginx
+        state: absent
+        remove: yes
+      failed_when: false
+
+    - name: Clean up package manager cache (Debian/Ubuntu)
+      ansible.builtin.apt:
+        autoremove: yes
+        autoclean: yes
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Clean up package manager cache (RHEL/AlmaLinux)
+      ansible.builtin.dnf:
+        autoremove: yes
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Verify Nginx is completely removed
+      ansible.builtin.command: which nginx
+      register: nginx_check
+      failed_when: false
+      changed_when: false
+
+    - name: Display uninstall status
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "      NGINX UNINSTALL COMPLETED"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Removed Items ==="
+          - "[OK] Nginx service stopped and disabled"
+          - "[OK] Nginx package removed"
+          - "[OK] Configuration directory: /etc/nginx"
+          - "[OK] SSL certificates: {{ ssl_dir }}"
+          - "[OK] Web root: {{ web_root }}"
+          - "[OK] Log directory: /var/log/nginx"
+          - "[OK] Cache directory: /var/cache/nginx"
+          - "[OK] Lib directory: /var/lib/nginx"
+          - ""
+          - "=== Verification ==="
+          - "Nginx binary: {{ '[WARNING] STILL EXISTS' if nginx_check.rc == 0 else '[OK] REMOVED' }}"
+          - ""
+          - "{{ '[SUCCESS] Nginx completely removed from system!' if nginx_check.rc != 0 else '[WARNING] Some Nginx components may still exist' }}"
+          - ""
+          - "════════════════════════════════════════"

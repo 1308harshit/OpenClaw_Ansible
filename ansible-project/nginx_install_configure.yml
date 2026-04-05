@@ -1,0 +1,234 @@
+---
+- name: Install and Configure Nginx for HTTPS (snoopy.timlam007.com)
+  hosts: localhost_linux
+  gather_facts: true
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    domain_name: "snoopy.timlam007.com"
+    web_root: "/var/www/snoopy_timlam007"
+    ssl_cert_path: "/etc/nginx/ssl/server.crt"
+    ssl_key_path: "/etc/nginx/ssl/server.key"
+
+  tasks:
+    - name: Check if Nginx is already installed
+      ansible.builtin.command: nginx -v
+      register: nginx_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install Nginx (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      when: ansible_facts.os_family == "Debian" and nginx_check.rc != 0
+
+    - name: Install Nginx (RHEL/AlmaLinux)
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+      when: ansible_facts.os_family == "RedHat" and nginx_check.rc != 0
+
+    - name: Create web root directory
+      ansible.builtin.file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: nginx
+        group: nginx
+        mode: '0755'
+
+    - name: Create simple index.html
+      ansible.builtin.copy:
+        content: |
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>{{ domain_name }} - SSL Demo</title>
+              <style>
+                  body {
+                      font-family: 'Segoe UI', Tahoma, sans-serif;
+                      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                      display: flex;
+                      justify-content: center;
+                      align-items: center;
+                      height: 100vh;
+                      margin: 0;
+                  }
+                  .container {
+                      background: white;
+                      padding: 50px;
+                      border-radius: 10px;
+                      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                      text-align: center;
+                  }
+                  h1 {
+                      color: #667eea;
+                      margin-bottom: 20px;
+                  }
+                  .status {
+                      color: #28a745;
+                      font-size: 1.2em;
+                      margin: 20px 0;
+                  }
+                  .info {
+                      background: #f8f9fa;
+                      padding: 20px;
+                      border-radius: 5px;
+                      margin-top: 20px;
+                  }
+                  a {
+                      color: #667eea;
+                      text-decoration: none;
+                  }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>SSL Certificate Demo</h1>
+                  <div class="status">HTTPS is Active</div>
+                  <p>This site is secured with an SSL certificate from HashiCorp Vault.</p>
+                  <div class="info">
+                      <p><strong>Domain:</strong> {{ domain_name }}</p>
+                      <p><strong>Certificate Authority:</strong> Vault PKI Engine</p>
+                      <p><strong>Automated Management:</strong> Ansible</p>
+                  </div>
+                  <p style="margin-top: 20px;">
+                      <a href="/ssl-info">View SSL Info</a> | 
+                      <a href="/health">Health Check</a>
+                  </p>
+              </div>
+          </body>
+          </html>
+        dest: "{{ web_root }}/index.html"
+        owner: nginx
+        group: nginx
+        mode: '0644'
+
+    - name: Deploy Nginx HTTPS configuration for snoopy.timlam007.com
+      ansible.builtin.template:
+        src: ../templates/nginx_timlam007.conf.j2
+        dest: /etc/nginx/conf.d/snoopy_timlam007.conf
+        owner: root
+        group: root
+        mode: '0644'
+      register: nginx_config
+
+    - name: Remove default Nginx site (if exists)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/nginx/sites-enabled/default
+        - /etc/nginx/conf.d/default.conf
+      ignore_errors: yes
+
+    - name: Ensure SSL certificate directory exists
+      ansible.builtin.file:
+        path: /etc/nginx/ssl
+        state: directory
+        mode: '0750'
+
+    - name: Check if SSL certificates exist
+      ansible.builtin.stat:
+        path: "{{ ssl_cert_path }}"
+      register: ssl_cert_check
+
+    - name: Warning if SSL certificate not found
+      ansible.builtin.debug:
+        msg: "[WARNING] SSL certificate not found at {{ ssl_cert_path }}. Please run vault_install_configure.yml first."
+      when: not ssl_cert_check.stat.exists
+
+    - name: Build full chain certificate for Nginx (server + issuing CA)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f /etc/nginx/ssl/server.crt ] && [ -f /etc/nginx/ssl/ca.crt ]; then
+          # Ensure a newline between PEM blocks (prevents "bad end line")
+          { cat /etc/nginx/ssl/server.crt; echo; cat /etc/nginx/ssl/ca.crt; echo; } > /etc/nginx/ssl/fullchain.crt
+          chmod 0644 /etc/nginx/ssl/fullchain.crt
+        elif [ -f /etc/nginx/ssl/server.crt ]; then
+          # Fallback: at least provide the leaf cert
+          cp -f /etc/nginx/ssl/server.crt /etc/nginx/ssl/fullchain.crt
+          chmod 0644 /etc/nginx/ssl/fullchain.crt
+        fi
+      when: ssl_cert_check.stat.exists
+      changed_when: false
+
+    - name: Install Vault Root CA in system trust store (Debian/Ubuntu)
+      ansible.builtin.copy:
+        src: /opt/vault/root_ca.crt
+        dest: /usr/local/share/ca-certificates/vault_root_ca.crt
+        remote_src: yes
+      when: ansible_facts.os_family == "Debian" and ssl_cert_check.stat.exists
+      register: ca_installed_debian
+
+    - name: Update CA certificates (Debian/Ubuntu)
+      ansible.builtin.command: update-ca-certificates
+      when: ca_installed_debian is changed
+
+    - name: Install Vault Root CA in system trust store (RHEL/AlmaLinux)
+      ansible.builtin.copy:
+        src: /opt/vault/root_ca.crt
+        dest: /etc/pki/ca-trust/source/anchors/vault_root_ca.crt
+        remote_src: yes
+      when: ansible_facts.os_family == "RedHat" and ssl_cert_check.stat.exists
+      register: ca_installed_rhel
+
+    - name: Update CA certificates (RHEL/AlmaLinux)
+      ansible.builtin.command: update-ca-trust
+      when: ca_installed_rhel is changed
+
+    - name: Copy Vault Root CA to a public download location for the browser (demo)
+      ansible.builtin.copy:
+        src: /opt/vault/root_ca.crt
+        dest: /etc/nginx/ssl/vault_root_ca.crt
+        remote_src: yes
+        mode: "0644"
+      when: ssl_cert_check.stat.exists
+
+    - name: Allow Nginx (httpd_t) to connect to network on SELinux (RHEL/AlmaLinux)
+      ansible.builtin.shell: |
+        # Required for reverse proxy to localhost:8000 on SELinux-enabled systems
+        if command -v getenforce >/dev/null 2>&1; then
+          if [ "$(getenforce)" != "Disabled" ]; then
+            setsebool -P httpd_can_network_connect on
+          fi
+        fi
+      when: ansible_facts.os_family == "RedHat"
+      changed_when: false
+
+    - name: Test Nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Display Nginx test result
+      ansible.builtin.debug:
+        msg: "{{ nginx_test.stderr_lines }}"
+
+    - name: Ensure Nginx is enabled
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: yes
+
+    - name: Reload Nginx if configuration changed
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_config.changed and nginx_test.rc == 0
+
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "[SUCCESS] Nginx installed and configured successfully!"
+          - "Domain: {{ domain_name }}"
+          - "Web Root: {{ web_root }}"
+          - "SSL Certificate: {{ ssl_cert_path }}"
+          - "Configuration: /etc/nginx/conf.d/snoopy_timlam007.conf"
+          - "Next: Run nginx_start.yml to start the service"

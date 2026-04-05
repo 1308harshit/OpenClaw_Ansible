@@ -1,0 +1,128 @@
+---
+- name: Show configured usernames from all devices
+  hosts: all_devices
+  gather_facts: no
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports/users"
+
+  tasks:
+    - name: Get current timestamp
+      ansible.builtin.shell: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+
+    - name: Create reports directory if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Detect EOS targets (httpapi / arista.eos)
+      ansible.builtin.set_fact:
+        is_eos_target: >-
+          {{
+            (ansible_connection | default('')) == 'httpapi'
+            or (ansible_network_os | default('')) in ['arista.eos.eos', 'eos']
+          }}
+
+    - name: Collect running-config (eAPI-safe)
+      arista.eos.eos_command:
+        commands:
+          - show running-config all
+      register: users_cfg
+      when: is_eos_target
+
+    - name: Default empty username facts for non-EOS targets
+      ansible.builtin.set_fact:
+        username_lines: []
+        usernames: []
+      when: not is_eos_target
+
+    - name: Extract username lines
+      ansible.builtin.set_fact:
+        username_lines: >-
+          {{
+            (users_cfg.stdout[0] | default('') | regex_replace('\\r', ''))
+            | regex_findall('username [^ ]+ privilege')
+          }}
+      when: is_eos_target
+
+    - name: Capture first 200 lines of raw output (debug aid)
+      ansible.builtin.set_fact:
+        raw_first_lines: >-
+          {{
+            (
+              users_cfg.stdout[0]
+              | default('')
+              | regex_replace('\\r', '')
+              | regex_findall('(?m)^.*$')
+            )[:200]
+          }}
+      when: is_eos_target
+
+    - name: Extract username list
+      ansible.builtin.set_fact:
+        usernames: >-
+          {{
+            (username_lines | default([]))
+            | map('regex_replace', '^username ', '')
+            | map('regex_replace', ' privilege$', '')
+            | list
+            | unique
+            | sort
+          }}
+      when: is_eos_target
+
+    - name: Save users report to file (per device)
+      ansible.builtin.copy:
+        content: |
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+
+          {% if usernames | length == 0 %}
+          No usernames found in running-config.
+
+          Raw command output (first 200 lines):
+          {% for line in (raw_first_lines | default([])) %}
+          {{ line }}
+          {% endfor %}
+          {% else %}
+          Usernames ({{ usernames | length }}):
+          {% for u in usernames %}
+          - {{ u }}
+          {% endfor %}
+
+          Raw lines:
+          {% for line in username_lines %}
+          {{ line }}
+          {% endfor %}
+          {% endif %}
+        dest: "{{ reports_dir }}/{{ inventory_hostname }}_users.txt"
+        mode: "0644"
+      delegate_to: localhost
+
+    - name: Save consolidated users summary (table)
+      ansible.builtin.copy:
+        content: |
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+
+          | Device | Usernames |
+          |--------|-----------|
+          {% for h in ansible_play_hosts_all | sort %}
+          | {{ h }} | {{ (hostvars[h].usernames | default([])) | join(', ') if (hostvars[h].usernames | default([]) | length > 0) else '(none)' }} |
+          {% endfor %}
+        dest: "{{ reports_dir }}/users_summary.txt"
+        mode: "0644"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Display where reports were saved
+      ansible.builtin.debug:
+        msg:
+          - "Per-device reports: {{ reports_dir }}/<device>_users.txt"
+          - "Summary report: {{ reports_dir }}/users_summary.txt"
+

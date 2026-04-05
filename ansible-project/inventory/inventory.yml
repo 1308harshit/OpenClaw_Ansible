@@ -1,0 +1,75 @@
+---
+all:
+  vars:
+    ansible_user: admin
+    ansible_password: admin
+    ansible_network_os: arista.eos.eos
+    ansible_connection: httpapi
+
+    ansible_httpapi_use_ssl: true
+    ansible_httpapi_validate_certs: false
+    ansible_httpapi_port: 443
+
+    ansible_become: yes
+    ansible_become_method: enable
+    # Most labs use the same password for enable-mode; keeps show run/privileged commands working consistently.
+    ansible_become_password: "{{ ansible_password }}"
+  children:
+
+    # These devices will receive configuration changes
+    leafs:
+      hosts:
+        leaf1:
+          ansible_host: leaf1
+        leaf2:
+          ansible_host: leaf2
+        leaf3:
+          ansible_host: leaf3
+        leaf4:
+          ansible_host: leaf4
+
+    # Spine switches - VISIBILITY ONLY
+    # These devices are not configured
+    spines:
+      hosts:
+        spine1:
+          ansible_host: spine1
+        spine2:
+          ansible_host: spine2
+
+    # Router R1 - VISIBILITY ONLY
+    routers:
+      hosts:
+        R1:
+          ansible_host: R1
+
+    # Host devices - VISIBILITY ONLY
+    hosts:
+      hosts:
+        host1:
+          ansible_host: host1
+        host2:
+          ansible_host: host2
+
+    # Fabric devices (leafs + spines)
+    fabric:
+      children:
+        leafs:
+        spines:
+
+    # All devices (network + hosts)
+    all_devices:
+      children:
+        leafs:
+        spines:
+        routers:
+        hosts:
+
+    # Localhost Linux operations (overrides network vars for localhost)
+    localhost_linux:
+      vars:
+        ansible_connection: local
+        ansible_become_method: sudo
+        ansible_become_password: ansible
+      hosts:
+        localhost:

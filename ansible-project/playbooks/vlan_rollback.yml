@@ -1,0 +1,42 @@
+---
+- name: Rollback VLANs 100 and 200 from leaf switches
+  hosts: leafs
+  gather_facts: no
+  vars:
+    vlans_to_remove:
+      - 100
+      - 200
+  
+  tasks:
+    - name: Check if VLANs exist before removal
+      arista.eos.eos_command:
+        commands:
+          - show vlan
+      register: vlan_check
+      failed_when: false
+    
+    - name: Remove VLANs from leaf switches
+      arista.eos.eos_vlans:
+        config:
+          - vlan_id: "{{ item }}"
+        state: deleted
+      loop: "{{ vlans_to_remove }}"
+      register: vlan_rollback_result
+      failed_when: false
+    
+    - name: Display rollback result
+      ansible.builtin.debug:
+        msg: "VLAN {{ item.item }} removal status on {{ inventory_hostname }}: {{ 'removed' if item.changed else 'not found or already removed' }}"
+      loop: "{{ vlan_rollback_result.results }}"
+  
+  post_tasks:
+    - name: Verify VLANs are removed
+      arista.eos.eos_command:
+        commands:
+          - show vlan
+      register: vlan_verify
+    
+    - name: Display verification result
+      ansible.builtin.debug:
+        var: vlan_verify.stdout_lines
+

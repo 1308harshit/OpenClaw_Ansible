@@ -1,0 +1,63 @@
+---
+- name: Show unused ports from all devices
+  hosts: fabric:routers
+  gather_facts: no
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+
+  tasks:
+    - name: Create reports directory if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Get all interfaces information
+      arista.eos.eos_command:
+        commands:
+          - show interfaces status
+      register: interfaces_result
+
+    - name: Extract interface lines
+      ansible.builtin.set_fact:
+        iface_lines: >-
+          {{
+            interfaces_result.stdout_lines[0]
+            | select('match', '^(Et|Ma|Lo)')
+            | list
+          }}
+
+    - name: Filter unused ports (admin down or not connected)
+      ansible.builtin.set_fact:
+        unused_ports: "{{ iface_lines | select('search', '(admin down|notconnect|disabled)') | list }}"
+
+    - name: Get current timestamp
+      ansible.builtin.shell: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+
+    - name: Save unused ports report to file
+      ansible.builtin.copy:
+        content: |
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+
+          Unused Ports (admin down, not connected, or disabled):
+          {% if unused_ports | length > 0 %}
+          {% for line in unused_ports %}
+          {{ line }}
+          {% endfor %}
+          {% else %}
+          No unused ports found on this device.
+          {% endif %}
+        dest: "{{ reports_dir }}/{{ inventory_hostname }}_unused_ports.txt"
+        mode: '0644'
+      delegate_to: localhost
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg: "Unused ports report saved for {{ inventory_hostname }} ({{ unused_ports | length }} unused ports found)"

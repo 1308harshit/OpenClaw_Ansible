@@ -1,0 +1,102 @@
+---
+# MongoDB Status Check Playbook
+# Checks MongoDB installation and service status
+
+- name: Check MongoDB Status
+  hosts: localhost_linux
+  gather_facts: true
+  become: true
+  connection: local
+  
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ansible_become_password: ansible
+  
+  tasks:
+    # ============================================
+    # Check if MongoDB is installed
+    # ============================================
+    - name: Check if MongoDB is installed
+      command: which mongod
+      register: mongodb_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Get MongoDB version
+      command: mongod --version
+      register: mongodb_version
+      changed_when: false
+      failed_when: false
+      when: mongodb_installed.rc == 0
+
+    # ============================================
+    # Check MongoDB service status
+    # ============================================
+    - name: Check MongoDB service status
+      systemd:
+        name: mongod
+      register: mongodb_service
+      failed_when: false
+
+    - name: Get detailed service status
+      command: systemctl status mongod
+      register: service_status
+      changed_when: false
+      failed_when: false
+
+    # ============================================
+    # Check MongoDB connection
+    # ============================================
+    - name: Check if MongoDB is listening on port 27017
+      wait_for:
+        host: localhost
+        port: 27017
+        timeout: 3
+      register: mongodb_port
+      failed_when: false
+
+    # ============================================
+    # Display status summary
+    # ============================================
+    - name: Display MongoDB status summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║           MONGODB STATUS REPORT                            ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          INSTALLATION STATUS:
+          {% if mongodb_installed.rc == 0 %}
+          [OK] MongoDB is installed
+          Version: {{ mongodb_version.stdout_lines[0] if mongodb_version.stdout_lines else 'Unknown' }}
+          {% else %}
+          [FAIL] MongoDB is NOT installed
+          {% endif %}
+          
+          SERVICE STATUS:
+          {% if mongodb_service.status is defined and mongodb_service.status.ActiveState == 'active' %}
+          [OK] Service is running
+          State: {{ mongodb_service.status.ActiveState }}
+          Enabled: {{ 'Yes' if mongodb_service.status.UnitFileState == 'enabled' else 'No' }}
+          {% else %}
+          [FAIL] Service is NOT running
+          {% endif %}
+          
+          CONNECTION STATUS:
+          {% if mongodb_port.failed is defined and not mongodb_port.failed %}
+          [OK] MongoDB is listening on port 27017
+          Connection: mongodb://localhost:27017
+          {% else %}
+          [FAIL] MongoDB is NOT listening on port 27017
+          {% endif %}
+          
+          CONFIGURATION:
+          Config File: /etc/mongod.conf
+          Data Directory: /var/lib/mongo
+          Log Directory: /var/log/mongodb
+          
+          ╔════════════════════════════════════════════════════════════╗
+          ║           END OF STATUS REPORT                             ║
+          ╚════════════════════════════════════════════════════════════╝

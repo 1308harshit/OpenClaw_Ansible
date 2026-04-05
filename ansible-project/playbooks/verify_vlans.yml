@@ -1,0 +1,17 @@
+---
+- name: Verify VLANs 100 and 200 exist
+  hosts: leafs
+  gather_facts: no
+  tasks:
+    - name: Get VLAN information
+      arista.eos.eos_command:
+        commands:
+          - show vlan
+      register: vlan_output
+    
+    - name: Display VLANs 100 and 200
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      loop: "{{ vlan_output.stdout_lines[0] }}"
+      when: "'100' in item or '200' in item or 'VLAN_100' in item or 'VLAN_200' in item"
+

@@ -1,0 +1,80 @@
+---
+# OpenClaw Uninstall Playbook
+# Removes OpenClaw and its configuration (keeps Node.js and other packages)
+
+- name: Uninstall OpenClaw from Server
+  hosts: openclaw
+  become: yes
+  vars_files:
+    - ../vars.yml
+  
+  tasks:
+    # ============================================
+    # Step 1: Stop OpenClaw gateway
+    # ============================================
+    - name: Stop OpenClaw gateway
+      command: openclaw gateway stop
+      register: stop_output
+      ignore_errors: yes
+      become: no
+
+    - name: Display stop output
+      debug:
+        var: stop_output.stdout_lines
+      when: stop_output.stdout is defined
+
+    # ============================================
+    # Step 2: Uninstall OpenClaw globally
+    # ============================================
+    - name: Uninstall OpenClaw from npm
+      command: npm uninstall -g openclaw
+      become: yes
+
+    - name: Verify OpenClaw is removed
+      command: openclaw --version
+      register: verify_removal
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Confirm removal
+      debug:
+        msg: "[OK] OpenClaw has been uninstalled from npm"
+      when: verify_removal.rc != 0
+
+    # ============================================
+    # Step 3: Remove OpenClaw configuration directory
+    # ============================================
+    - name: Remove ~/.openclaw directory
+      file:
+        path: "{{ ansible_env.HOME }}/.openclaw"
+        state: absent
+      become: no
+
+    - name: Check if directory was removed
+      stat:
+        path: "{{ ansible_env.HOME }}/.openclaw"
+      register: openclaw_dir
+      become: no
+
+    - name: Confirm directory removal
+      debug:
+        msg: "[OK] ~/.openclaw directory has been removed"
+      when: not openclaw_dir.stat.exists
+
+    # ============================================
+    # Step 4: Final confirmation
+    # ============================================
+    - name: Uninstall complete
+      debug:
+        msg: |
+          [OK] OpenClaw has been completely uninstalled!
+          
+          Removed:
+          - OpenClaw npm package (global)
+          - ~/.openclaw configuration directory
+          - Gateway service stopped
+          
+          Preserved:
+          - Node.js (still installed)
+          - System packages
+          - Other npm packages

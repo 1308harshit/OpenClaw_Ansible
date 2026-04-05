@@ -1,0 +1,177 @@
+---
+- name: Rollback to Previous SSL Certificate
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ssl_cert_path: "/etc/nginx/ssl/server.crt"
+    ssl_key_path: "/etc/nginx/ssl/server.key"
+    backup_cert_path: "/etc/nginx/ssl/server.crt.backup"
+    backup_key_path: "/etc/nginx/ssl/server.key.backup"
+    pre_renewal_cert_path: "/etc/nginx/ssl/server.crt.pre-renewal"
+    pre_renewal_key_path: "/etc/nginx/ssl/server.key.pre-renewal"
+
+  tasks:
+    - name: Check for backup certificates
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: backup_files
+      loop:
+        - "{{ backup_cert_path }}"
+        - "{{ backup_key_path }}"
+        - "{{ pre_renewal_cert_path }}"
+        - "{{ pre_renewal_key_path }}"
+
+    - name: Determine which backup to use
+      ansible.builtin.set_fact:
+        use_backup: "{{ backup_cert_path if backup_files.results[0].stat.exists else pre_renewal_cert_path }}"
+        use_backup_key: "{{ backup_key_path if backup_files.results[1].stat.exists else pre_renewal_key_path }}"
+        backup_type: "{{ 'original_backup' if backup_files.results[0].stat.exists else 'pre_renewal_backup' }}"
+
+    - name: Check if any backup exists
+      ansible.builtin.fail:
+        msg: "[ERROR] No backup certificates found. Cannot rollback."
+      when: not (backup_files.results[0].stat.exists or backup_files.results[2].stat.exists)
+
+    - name: Get current certificate info (before rollback)
+      ansible.builtin.shell: |
+        openssl x509 -in {{ ssl_cert_path }} -noout -subject -enddate
+      register: current_cert_before
+      changed_when: false
+      failed_when: false
+
+    - name: Get backup certificate info
+      ansible.builtin.shell: |
+        openssl x509 -in {{ use_backup }} -noout -subject -enddate
+      register: backup_cert_info
+      changed_when: false
+
+    - name: Backup current certificate before rollback
+      ansible.builtin.copy:
+        src: "{{ ssl_cert_path }}"
+        dest: "{{ ssl_cert_path }}.before_rollback"
+        remote_src: yes
+        mode: '0644'
+
+    - name: Backup current key before rollback
+      ansible.builtin.copy:
+        src: "{{ ssl_key_path }}"
+        dest: "{{ ssl_key_path }}.before_rollback"
+        remote_src: yes
+        mode: '0600'
+
+    - name: Restore certificate from backup
+      ansible.builtin.copy:
+        src: "{{ use_backup }}"
+        dest: "{{ ssl_cert_path }}"
+        remote_src: yes
+        mode: '0644'
+        force: yes
+
+    - name: Restore private key from backup
+      ansible.builtin.copy:
+        src: "{{ use_backup_key }}"
+        dest: "{{ ssl_key_path }}"
+        remote_src: yes
+        mode: '0600'
+        force: yes
+
+    - name: Rebuild fullchain.crt with rolled-back certificate (Nginx uses fullchain, not server.crt)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        # Try to build fullchain with CA cert if available, otherwise just use server cert
+        if [ -f /etc/nginx/ssl/ca.crt ]; then
+          { cat {{ ssl_cert_path }}; echo; cat /etc/nginx/ssl/ca.crt; echo; } > /etc/nginx/ssl/fullchain.crt
+        else
+          cp -f {{ ssl_cert_path }} /etc/nginx/ssl/fullchain.crt
+        fi
+        chmod 0644 /etc/nginx/ssl/fullchain.crt
+      changed_when: false
+
+    - name: Test Nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Reload Nginx to apply rolled-back certificate
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_test.rc == 0
+      register: nginx_reload
+      ignore_errors: yes
+
+    - name: Restart Nginx if reload failed (fallback)
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
+      when: nginx_test.rc == 0 and (nginx_reload is not defined or nginx_reload.failed)
+
+    - name: Verify rolled-back certificate
+      ansible.builtin.shell: |
+        NOT_AFTER=$(openssl x509 -in {{ ssl_cert_path }} -noout -enddate | cut -d= -f2)
+        EXPIRY_EPOCH=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$NOT_AFTER" +%s 2>/dev/null)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        
+        SUBJECT=$(openssl x509 -in {{ ssl_cert_path }} -noout -subject | sed 's/subject=//')
+        SERIAL=$(openssl x509 -in {{ ssl_cert_path }} -noout -serial | cut -d= -f2)
+        
+        cat <<EOF
+        {
+          "days_remaining": $DAYS_REMAINING,
+          "expires": "$NOT_AFTER",
+          "subject": "$SUBJECT",
+          "serial": "$SERIAL"
+        }
+        EOF
+      register: restored_cert_info
+      changed_when: false
+
+    - name: Parse restored certificate info
+      ansible.builtin.set_fact:
+        restored_cert: "{{ restored_cert_info.stdout | from_json }}"
+
+    - name: Test HTTPS endpoint
+      ansible.builtin.uri:
+        url: https://localhost/health
+        validate_certs: no
+        return_content: yes
+      register: https_test
+      failed_when: false
+
+    - name: Display rollback success message
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "    [ROLLBACK] CERTIFICATE ROLLBACK COMPLETED"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Rollback Details ==="
+          - "Backup Type: {{ backup_type | replace('_', ' ') | title }}"
+          - "Backup Source: {{ use_backup }}"
+          - ""
+          - "=== Previous Certificate (saved) ==="
+          - "{{ current_cert_before.stdout_lines | join('\n') }}"
+          - "Saved to: {{ ssl_cert_path }}.before_rollback"
+          - ""
+          - "=== Restored Certificate ==="
+          - "Subject: {{ restored_cert.subject }}"
+          - "Serial: {{ restored_cert.serial }}"
+          - "Expires: {{ restored_cert.expires }}"
+          - "Days Remaining: {{ restored_cert.days_remaining }} days"
+          - "Status: {{ '[ERROR] EXPIRED' if restored_cert.days_remaining < 0 else ('[WARNING] EXPIRING SOON' if restored_cert.days_remaining < 7 else '[OK] VALID') }}"
+          - ""
+          - "=== Service Status ==="
+          - "Nginx Config Test: {{ '[OK] PASSED' if nginx_test.rc == 0 else '[FAILED]' }}"
+          - "Nginx Reloaded: {{ '[OK] YES' if nginx_test.rc == 0 else '[SKIPPED]' }}"
+          - "HTTPS Endpoint: {{ '[OK] HEALTHY (' + (https_test.status | string) + ')' if https_test.status == 200 else '[WARNING] CHECK MANUALLY' }}"
+          - ""
+          - "{% if restored_cert.days_remaining < 0 %}[WARNING] Rolled-back certificate is EXPIRED!{% endif %}"
+          - ""
+          - "════════════════════════════════════════"

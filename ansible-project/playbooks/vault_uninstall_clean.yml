@@ -1,0 +1,159 @@
+---
+- name: Uninstall HashiCorp Vault and Remove All Data
+  hosts: localhost_linux
+  gather_facts: true
+  become: yes
+  connection: local
+
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    vault_bin: "/usr/local/bin/vault"
+    vault_data_dir: "/opt/vault"
+    vault_config_dir: "/etc/vault.d"
+    vault_service_user: "vault"
+
+  tasks:
+    - name: Stop Vault service
+      ansible.builtin.systemd:
+        name: vault
+        state: stopped
+      failed_when: false
+
+    - name: Disable Vault service
+      ansible.builtin.systemd:
+        name: vault
+        enabled: no
+      failed_when: false
+
+    - name: Remove Vault systemd service file
+      ansible.builtin.file:
+        path: /etc/systemd/system/vault.service
+        state: absent
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Remove Vault binary
+      ansible.builtin.file:
+        path: "{{ vault_bin }}"
+        state: absent
+
+    - name: Remove Vault data directory
+      ansible.builtin.file:
+        path: "{{ vault_data_dir }}"
+        state: absent
+
+    - name: Remove Vault configuration directory
+      ansible.builtin.file:
+        path: "{{ vault_config_dir }}"
+        state: absent
+
+    - name: Remove Vault initialization file
+      ansible.builtin.file:
+        path: /root/.vault_init.json
+        state: absent
+
+    - name: Remove Vault Root CA from system trust store (Debian/Ubuntu)
+      ansible.builtin.file:
+        path: /usr/local/share/ca-certificates/vault_root_ca.crt
+        state: absent
+      when: ansible_facts.os_family == "Debian"
+      register: ca_removed_debian
+
+    - name: Update CA certificates after removal (Debian/Ubuntu)
+      ansible.builtin.command: update-ca-certificates
+      when: ca_removed_debian is changed
+
+    - name: Remove Vault Root CA from system trust store (RHEL/AlmaLinux)
+      ansible.builtin.file:
+        path: /etc/pki/ca-trust/source/anchors/vault_root_ca.crt
+        state: absent
+      when: ansible_facts.os_family == "RedHat"
+      register: ca_removed_rhel
+
+    - name: Update CA certificates after removal (RHEL/AlmaLinux)
+      ansible.builtin.command: update-ca-trust
+      when: ca_removed_rhel is changed
+
+    - name: Remove Vault system user
+      ansible.builtin.user:
+        name: "{{ vault_service_user }}"
+        state: absent
+        remove: yes
+      failed_when: false
+
+    - name: Remove Vault environment variables from profile (if any)
+      ansible.builtin.lineinfile:
+        path: "{{ item }}"
+        regexp: '.*VAULT_.*'
+        state: absent
+      loop:
+        - /etc/profile
+        - /etc/environment
+        - /root/.bashrc
+      failed_when: false
+
+    - name: Remove temporary Vault files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/vault.zip
+        - /tmp/vault_*
+      failed_when: false
+
+    - name: Verify Vault is completely removed
+      ansible.builtin.command: which vault
+      register: vault_check
+      failed_when: false
+      changed_when: false
+
+    - name: Check for remaining Vault processes
+      ansible.builtin.shell: |
+        ps aux | grep vault | grep -v grep || echo "No vault processes"
+      register: vault_processes
+      changed_when: false
+
+    - name: Check for remaining Vault directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: remaining_dirs
+      loop:
+        - "{{ vault_bin }}"
+        - "{{ vault_data_dir }}"
+        - "{{ vault_config_dir }}"
+        - /root/.vault_init.json
+
+    - name: Display uninstall status
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "    HASHICORP VAULT UNINSTALL COMPLETED"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Removed Items ==="
+          - "[OK] Vault service stopped and disabled"
+          - "[OK] Vault binary: {{ vault_bin }}"
+          - "[OK] Vault data directory: {{ vault_data_dir }}"
+          - "[OK] Vault config directory: {{ vault_config_dir }}"
+          - "[OK] Vault initialization data: /root/.vault_init.json"
+          - "[OK] Vault Root CA removed from system trust store"
+          - "[OK] Vault systemd service file"
+          - "[OK] Vault system user: {{ vault_service_user }}"
+          - ""
+          - "=== Verification ==="
+          - "Vault binary: {{ '[WARNING] STILL EXISTS' if vault_check.rc == 0 else '[OK] REMOVED' }}"
+          - "Vault processes: {{ vault_processes.stdout }}"
+          - ""
+          - "=== Remaining Directories Check ==="
+          - "{{ vault_bin }}: {{ '[WARNING] EXISTS' if remaining_dirs.results[0].stat.exists else '[OK] REMOVED' }}"
+          - "{{ vault_data_dir }}: {{ '[WARNING] EXISTS' if remaining_dirs.results[1].stat.exists else '[OK] REMOVED' }}"
+          - "{{ vault_config_dir }}: {{ '[WARNING] EXISTS' if remaining_dirs.results[2].stat.exists else '[OK] REMOVED' }}"
+          - "/root/.vault_init.json: {{ '[WARNING] EXISTS' if remaining_dirs.results[3].stat.exists else '[OK] REMOVED' }}"
+          - ""
+          - "{{ '[SUCCESS] HashiCorp Vault completely removed from system!' if vault_check.rc != 0 else '[WARNING] Some Vault components may still exist' }}"
+          - ""
+          - "════════════════════════════════════════"

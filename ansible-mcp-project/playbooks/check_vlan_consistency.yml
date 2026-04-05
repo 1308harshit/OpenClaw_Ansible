@@ -1,0 +1,43 @@
+---
+- name: Verify VLANs exist across fabric
+  hosts: fabric
+  gather_facts: no
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+
+  tasks:
+    - name: Create reports directory if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Get VLAN information
+      arista.eos.eos_command:
+        commands:
+          - show vlan
+      register: vlan_output
+
+    - name: Get current timestamp
+      ansible.builtin.shell: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+
+    - name: Save VLAN report to file
+      ansible.builtin.copy:
+        content: |
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+
+          {{ vlan_output.stdout[0] }}
+        dest: "{{ reports_dir }}/{{ inventory_hostname }}_vlans.txt"
+        mode: '0644'
+      delegate_to: localhost
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg: "VLAN report saved for {{ inventory_hostname }}"

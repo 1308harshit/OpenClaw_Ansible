@@ -1,0 +1,16 @@
+# python
+venv/
+__pycache__/
+*.pyc
+
+# env
+.env
+frontend/.env
+
+# node
+frontend/node_modules/
+frontend/.npm/
+
+# ansible runtime
+*.retry
+.ansible/

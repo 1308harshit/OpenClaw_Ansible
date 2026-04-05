@@ -1,0 +1,95 @@
+---
+# MongoDB Uninstallation Playbook for AlmaLinux
+# Removes MongoDB and cleans all data
+
+- name: Uninstall MongoDB from AlmaLinux
+  hosts: localhost_linux
+  gather_facts: true
+  become: true
+  connection: local
+  
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ansible_become_password: ansible
+    remove_data: yes  # Always remove data and logs
+  
+  tasks:
+    # ============================================
+    # Step 1: Stop MongoDB service
+    # ============================================
+    - name: Stop MongoDB service
+      systemd:
+        name: mongod
+        state: stopped
+      ignore_errors: yes
+
+    - name: Disable MongoDB service
+      systemd:
+        name: mongod
+        enabled: no
+      ignore_errors: yes
+
+    # ============================================
+    # Step 2: Remove MongoDB packages
+    # ============================================
+    - name: Remove MongoDB packages
+      dnf:
+        name:
+          - mongodb-org
+          - mongodb-org-server
+          - mongodb-org-mongos
+          - mongodb-org-tools
+        state: absent
+
+    # ============================================
+    # Step 3: Remove MongoDB repository
+    # ============================================
+    - name: Remove MongoDB repository
+      file:
+        path: /etc/yum.repos.d/mongodb-org-7.0.repo
+        state: absent
+
+    # ============================================
+    # Step 4: Remove data and logs
+    # ============================================
+    - name: Remove MongoDB data directory
+      file:
+        path: /var/lib/mongo
+        state: absent
+
+    - name: Remove MongoDB log directory
+      file:
+        path: /var/log/mongodb
+        state: absent
+
+    - name: Remove MongoDB config file
+      file:
+        path: /etc/mongod.conf
+        state: absent
+
+    # ============================================
+    # Step 5: Verify removal
+    # ============================================
+    - name: Check if MongoDB is removed
+      command: which mongod
+      register: mongodb_check
+      changed_when: false
+      failed_when: false  # Don't fail if mongod is not found (that's what we want!)
+
+    - name: Display uninstallation summary
+      debug:
+        msg: |
+          [OK] MongoDB uninstallation completed!
+          
+          Removed:
+          - MongoDB packages
+          - MongoDB repository
+          - MongoDB config file
+          - MongoDB data directory
+          - MongoDB log directory
+          
+          Next Steps:
+          1. Update frontend/.env to use MongoDB Atlas or remove MONGODB_URI
+          2. Restart Node.js server

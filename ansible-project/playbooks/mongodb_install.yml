@@ -1,0 +1,119 @@
+---
+# MongoDB Installation Playbook for AlmaLinux
+# Installs MongoDB Community Edition locally
+
+- name: Install MongoDB on AlmaLinux
+  hosts: localhost_linux
+  gather_facts: true
+  become: true
+  connection: local
+  
+  vars:
+    ansible_connection: local
+    ansible_network_os: ""
+    ansible_become_method: sudo
+    ansible_become_password: ansible
+  
+  tasks:
+    # ============================================
+    # Step 1: Add MongoDB repository
+    # ============================================
+    - name: Add MongoDB 7.0 repository
+      yum_repository:
+        name: mongodb-org-7.0
+        description: MongoDB Repository
+        baseurl: https://repo.mongodb.org/yum/redhat/9/mongodb-org/7.0/x86_64/
+        gpgcheck: no
+        enabled: yes
+
+    # ============================================
+    # Step 2: Install MongoDB packages
+    # ============================================
+    - name: Install MongoDB packages
+      dnf:
+        name:
+          - mongodb-org
+          - mongodb-org-server
+          - mongodb-org-mongos
+          - mongodb-org-tools
+        state: present
+        update_cache: yes
+
+    # ============================================
+    # Step 3: Create MongoDB data directory
+    # ============================================
+    - name: Create MongoDB data directory
+      file:
+        path: /var/lib/mongo
+        state: directory
+        owner: mongod
+        group: mongod
+        mode: '0755'
+
+    - name: Create MongoDB log directory
+      file:
+        path: /var/log/mongodb
+        state: directory
+        owner: mongod
+        group: mongod
+        mode: '0755'
+
+    # ============================================
+    # Step 4: Configure MongoDB
+    # ============================================
+    - name: Configure MongoDB to listen on all interfaces
+      lineinfile:
+        path: /etc/mongod.conf
+        regexp: '^  bindIp:'
+        line: '  bindIp: 127.0.0.1'
+        backup: yes
+
+    # ============================================
+    # Step 5: Start and enable MongoDB service
+    # ============================================
+    - name: Start MongoDB service
+      systemd:
+        name: mongod
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Wait for MongoDB to start
+      wait_for:
+        port: 27017
+        delay: 5
+        timeout: 30
+
+    # ============================================
+    # Step 6: Verify MongoDB installation
+    # ============================================
+    - name: Check MongoDB version
+      command: mongod --version
+      register: mongodb_version
+      changed_when: false
+
+    - name: Display MongoDB version
+      debug:
+        msg: "MongoDB installed successfully: {{ mongodb_version.stdout_lines[0] }}"
+
+    - name: Check MongoDB service status
+      command: systemctl status mongod
+      register: mongodb_status
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display installation summary
+      debug:
+        msg: |
+          [OK] MongoDB installation completed!
+          
+          Service Status: {{ 'Running' if mongodb_status.rc == 0 else 'Stopped' }}
+          Connection: mongodb://localhost:27017
+          Data Directory: /var/lib/mongo
+          Log Directory: /var/log/mongodb
+          Config File: /etc/mongod.conf
+          
+          Next Steps:
+          1. Update frontend/.env with: MONGODB_URI=mongodb://localhost:27017/ansible_mcp
+          2. Restart Node.js server
+          3. Test the history feature

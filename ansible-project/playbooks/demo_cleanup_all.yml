@@ -1,0 +1,140 @@
+---
+- name: Display Cleanup Warning
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Display cleanup warning
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "   [CLEANUP] SSL DEMO ENVIRONMENT CLEANUP"
+          - "════════════════════════════════════════"
+          - ""
+          - "[WARNING] This will completely remove:"
+          - "  • Nginx web server"
+          - "  • HashiCorp Vault"
+          - "  • Active SSL certificates"
+          - "  • Expired demo certificates"
+          - "  • All configuration files"
+          - "  • All reports"
+          - ""
+          - "[NOTE] SSL certificate backups are preserved"
+          - "  (for rollback capability after cleanup)."
+          - ""
+          - "This action will reset the system to"
+          - "a clean state for a fresh demo setup."
+          - ""
+          - "════════════════════════════════════════"
+
+- name: Step 1 of 6 - Remove SSL expiry alert schedule (cron)
+  import_playbook: ssl_cert_alert_unschedule.yml
+
+- name: Step 2 of 6 - Stop Nginx service
+  import_playbook: nginx_stop.yml
+
+- name: Step 3 of 6 - Uninstall Nginx completely
+  import_playbook: nginx_uninstall.yml
+
+- name: Step 4 of 6 - Uninstall HashiCorp Vault completely
+  import_playbook: vault_uninstall_clean.yml
+
+- name: Step 5 of 6 - Remove expired demo certificates only (keep real backups for rollback)
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  tasks:
+    - name: Remove expired demo certificates only (preserve real backups for rollback)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/nginx/ssl/expired_demo_cert.crt
+        - /etc/nginx/ssl/expired_demo_cert.key
+      ignore_errors: yes
+
+- name: Step 6 of 6 - Remove SSL demo reports
+  hosts: localhost_linux
+  gather_facts: false
+  become: yes
+  tasks:
+    - name: Remove SSL demo reports
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'ANSIBLE_PROJECT_ROOT') | default('/home/ansible/NERD_clab_topologies/clos-medium/ansible-project', true) }}/reports/ssl_report"
+        state: absent
+      ignore_errors: yes
+
+- name: Display Cleanup Completion Summary
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Final verification - check for remaining components
+      ansible.builtin.shell: |
+        RESULTS=""
+        
+        # Check Nginx
+        if command -v nginx >/dev/null 2>&1; then
+          RESULTS="${RESULTS}Nginx: STILL INSTALLED\n"
+        else
+          RESULTS="${RESULTS}Nginx: REMOVED\n"
+        fi
+        
+        # Check Vault
+        if command -v vault >/dev/null 2>&1; then
+          RESULTS="${RESULTS}Vault: STILL INSTALLED\n"
+        else
+          RESULTS="${RESULTS}Vault: REMOVED\n"
+        fi
+        
+        # Check Nginx service
+        if systemctl is-active nginx >/dev/null 2>&1; then
+          RESULTS="${RESULTS}Nginx Service: STILL RUNNING\n"
+        else
+          RESULTS="${RESULTS}Nginx Service: STOPPED\n"
+        fi
+        
+        # Check Vault service
+        if systemctl is-active vault >/dev/null 2>&1; then
+          RESULTS="${RESULTS}Vault Service: STILL RUNNING\n"
+        else
+          RESULTS="${RESULTS}Vault Service: STOPPED\n"
+        fi
+        
+        # Check for key directories
+        if [ -d /etc/nginx ]; then
+          RESULTS="${RESULTS}/etc/nginx: EXISTS\n"
+        else
+          RESULTS="${RESULTS}/etc/nginx: REMOVED\n"
+        fi
+        
+        if [ -d /opt/vault ]; then
+          RESULTS="${RESULTS}/opt/vault: EXISTS\n"
+        else
+          RESULTS="${RESULTS}/opt/vault: REMOVED\n"
+        fi
+        
+        echo -e "$RESULTS"
+      register: cleanup_verification
+      changed_when: false
+
+    - name: Display cleanup completion summary
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "════════════════════════════════════════"
+          - "   [SUCCESS] SSL DEMO CLEANUP COMPLETED"
+          - "════════════════════════════════════════"
+          - ""
+          - "=== Removal Status ==="
+          - "{{ cleanup_verification.stdout_lines | join('\n') }}"
+          - ""
+          - "=== System State ==="
+          - "The system is now in a clean state."
+          - "You can run demo_setup_all.yml to set up the environment again."
+          - ""
+          - "[TIP] To verify complete removal, run:"
+          - "   which nginx && echo 'Nginx found' || echo 'Nginx removed'"
+          - "   which vault && echo 'Vault found' || echo 'Vault removed'"
+          - ""
+          - "════════════════════════════════════════"
