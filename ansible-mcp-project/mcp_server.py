@@ -663,7 +663,7 @@ class AnsibleMcpServer:
         if extra_vars:
             final_extra_vars.update(extra_vars)
 
-        cmd: List[str] = ["ansible-playbook", "-i", str(self.inventory_file), str(pb)]
+        cmd: List[str] = ["ansible-playbook", "-i", str(self.inventory_file), "--playbook-dir", str(self.project_root), str(pb)]
         if check:
             cmd += ["--check", "--diff"]
         if limit_v:

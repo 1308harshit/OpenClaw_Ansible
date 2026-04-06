@@ -231,6 +231,29 @@ const TOOL_DECLARATIONS = [
       required: ["playbook"],
     },
   },
+  {
+    name: "run_playbooks",
+    description:
+      "Run multiple playbooks in sequence with a single call. Use this when the user asks for multiple operations in one prompt. Returns per-playbook results. Prefer this over calling run_playbook multiple times for combo prompts.",
+    parameters: {
+      type: "object",
+      properties: {
+        playbooks: {
+          type: "array",
+          items: { type: "string" },
+          description: "Ordered list of playbook filenames to run",
+        },
+        limit: { type: "string" },
+        tags: { type: "string" },
+        extra_vars: { type: "object" },
+        stop_on_failure: {
+          type: "boolean",
+          description: "Stop sequence if a playbook fails. Defaults to true.",
+        },
+      },
+      required: ["playbooks"],
+    },
+  },
 ];
 
 const SYSTEM_INSTRUCTION = `
@@ -291,7 +314,7 @@ Fabric Audit (CRITICAL MAPPINGS):
 - When user says ANY of: "audit the full fabric", "fabric audit", "operations summary", "quick operations summary", "show down interfaces", "list unused ports", "verify vlan consistency", "apply baseline hardening", "generate compliance report", "fabric compliance report", "compliance report for the full fabric", or any combination of these → ALWAYS run: fabric_audit_all.yml (the orchestrator). Do NOT break it into individual playbooks.
 - fabric_audit_all.yml runs these steps in sequence: show_interfaces_all.yml → show_unused_ports.yml → check_vlan_consistency.yml → harden_fabric_simple.yml → generate_fabric_compliance_report.yml
 - After fabric_audit_all.yml completes, ALWAYS provide the compliance report link: /reports/fabric_compliance/index.html
-- For the fabric compliance report, use the full URL: ${baseUrl}/reports/fabric_compliance/index.html
+- For the fabric compliance report, use the full URL: BASE_URL/reports/fabric_compliance/index.html
 - Also call summarize_unused_ports_reports() after the audit to report which device has the most unused ports.
 
 Answer completeness:
@@ -306,6 +329,26 @@ Anti-half-response checklist (MANDATORY):
   2) Key findings (e.g. winner leaf + counts)
   3) Report locations (txt paths) and/or dashboard link (full URL for switch summary only)
   4) Next steps (one line)
+
+Multi-Playbook Combo Prompts:
+- When the user asks for multiple operations in a single prompt, use the FASTEST path available:
+
+FAST PATH — Known orchestrator playbooks (single run_playbook call):
+- "audit the full fabric", "full fabric audit", "operations summary", "audit and compliance", or any prompt mentioning 3+ of [interfaces, unused ports, VLAN, hardening, compliance report] → ALWAYS run: fabric_audit_all.yml (single call, fastest)
+
+DYNAMIC PATH — Unknown combos (use run_playbooks with a list):
+- When the user asks for 2+ operations that don't match a known orchestrator playbook, call run_playbooks with the ordered list of playbook filenames.
+- ALWAYS call list_playbooks_with_summary FIRST to resolve exact filenames before building the list.
+- Example combos and their run_playbooks lists:
+  - "show interfaces and check VLANs" → ["show_interfaces_all.yml", "check_vlan_consistency.yml"]
+  - "check VLANs and harden the fabric" → ["check_vlan_consistency.yml", "harden_fabric_simple.yml"]
+  - "show unused ports and generate compliance report" → ["show_unused_ports.yml", "generate_fabric_compliance_report.yml"]
+  - "show interfaces, unused ports, and VLANs" → ["show_interfaces_all.yml", "show_unused_ports.yml", "check_vlan_consistency.yml"]
+- Pass limit/tags/extra_vars if the user specifies a scope (e.g. "for leafs only" → limit: "leafs").
+- Set stop_on_failure: false if the user wants best-effort (e.g. "run all even if one fails").
+- After run_playbooks completes, summarize each playbook's ok/fail status and provide report links where applicable.
+
+FALLBACK — Sequential run_playbook calls (existing loop handles this automatically if needed).
 `.trim();
 
 function getBaseUrl(req) {
@@ -453,7 +496,39 @@ function startMcpProcess() {
   return { callTool, close };
 }
 
-async function runGeminiWithTools(userText, systemInstruction) {
+// Tool call labels shown in the progress stream
+const TOOL_LABELS = {
+  list_tools: "📋 Listing available tools",
+  list_inventory: "📦 Reading inventory",
+  list_playbooks: "📂 Listing playbooks",
+  list_playbooks_with_summary: "📂 Scanning playbooks",
+  list_reports: "📄 Listing reports",
+  read_report_file: "📄 Reading report",
+  list_backups: "💾 Listing backups",
+  read_backup_file: "💾 Reading backup",
+  summarize_unused_ports_reports: "📊 Summarizing unused ports",
+  read_playbook_file: "📖 Reading playbook",
+  get_playbook_info: "🔍 Inspecting playbook",
+  check_service_status: "🔎 Checking service status",
+  check_https_endpoint: "🌐 Checking HTTPS endpoint",
+  run_playbook: "🚀 Running playbook",
+  run_playbook_check: "🔬 Dry-running playbook (check mode)",
+  run_playbooks: "🚀 Running playbook sequence",
+};
+
+function toolProgressLabel(name, args) {
+  const base = TOOL_LABELS[name] || `⚙️  Calling ${name}`;
+  if (name === "run_playbook" || name === "run_playbook_check") {
+    return `${base}: ${args.playbook || ""}${args.limit ? ` [limit: ${args.limit}]` : ""}`;
+  }
+  if (name === "run_playbooks") {
+    const list = (args.playbooks || []).join(", ");
+    return `${base}: [${list}]${args.limit ? ` [limit: ${args.limit}]` : ""}`;
+  }
+  return base;
+}
+
+async function runGeminiWithTools(userText, systemInstruction, onProgress) {
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({
     model: GEMINI_MODEL,
@@ -482,8 +557,13 @@ async function runGeminiWithTools(userText, systemInstruction) {
         const name = call.name;
         const args = call.args || call.arguments || {};
 
+        if (onProgress) onProgress({ type: "tool_start", name, args, label: toolProgressLabel(name, args) });
+
         const toolOut = await mcp.callTool(name, args);
         toolLog.push({ name, args, toolOut });
+
+        const ok = toolOut.result?.ok !== false;
+        if (onProgress) onProgress({ type: "tool_done", name, ok });
 
         result = await chat.sendMessage([
           { functionResponse: { name, response: toolOut.result } },
@@ -517,7 +597,7 @@ app.post("/query", async (req, res) => {
 
   try {
     const baseUrl = getBaseUrl(req);
-    const out = await runGeminiWithTools(text, buildSystemInstruction(baseUrl));
+    const out = await runGeminiWithTools(text, buildSystemInstruction(baseUrl), null);
     const responseText = out.text || "";
 
     // Save to MongoDB history
@@ -526,6 +606,37 @@ app.post("/query", async (req, res) => {
     res.type("text/plain").send(responseText);
   } catch (e) {
     res.status(500).type("text/plain").send(String(e?.message || e));
+  }
+});
+
+// SSE streaming endpoint — emits progress events as each tool call happens
+app.get("/query-stream", async (req, res) => {
+  const text = String(req.query?.text || "").trim();
+  if (!text) return res.status(400).type("text/plain").send("text required");
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+  try {
+    const baseUrl = getBaseUrl(req);
+    send({ type: "start" });
+
+    const out = await runGeminiWithTools(text, buildSystemInstruction(baseUrl), (event) => {
+      send(event);
+    });
+
+    const responseText = out.text || "";
+    await saveQueryHistory(text, responseText);
+    send({ type: "result", text: responseText });
+  } catch (e) {
+    send({ type: "error", message: String(e?.message || e) });
+  } finally {
+    res.write("data: [DONE]\n\n");
+    res.end();
   }
 });
 
