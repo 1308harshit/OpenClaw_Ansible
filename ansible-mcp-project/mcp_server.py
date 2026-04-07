@@ -963,6 +963,10 @@ def main() -> None:
         _eprint("ANSIBLE_PROJECT_ROOT does not exist or is not a directory")
         sys.exit(2)
 
+    # Debug: Print the project root being used
+    _eprint(f"DEBUG: ANSIBLE_PROJECT_ROOT={project_root}")
+    _eprint(f"DEBUG: Inventory will be at: {project_root / 'inventory' / 'inventory.yml'}")
+
     # Optional: colon-separated list of extra playbook directories to also scan
     extra_playbooks_dirs: List[Path] = []
     extra_raw = os.getenv("EXTRA_PLAYBOOKS_DIRS", "")
