@@ -440,14 +440,22 @@ class AnsibleMcpServer:
         return {"ok": True, "inventory": inv, **{k: res[k] for k in ("returncode", "stderr", "cmd")}}
 
     def tool_list_playbooks(self) -> Dict[str, Any]:
-        playbooks = [p.name for p in sorted(self.playbooks_dir.glob("*.y*ml"))]
-        return {"ok": True, "playbooks": playbooks}
+        # Use _playbook_index to get all playbooks from all directories
+        _, names = self._playbook_index()
+        return {"ok": True, "playbooks": names}
 
     def tool_list_playbooks_with_summary(self) -> Dict[str, Any]:
-        playbooks = [p for p in sorted(self.playbooks_dir.glob("*.y*ml")) if p.is_file()]
+        # Collect playbooks from primary dir first, then extra dirs
+        all_dirs = [self.playbooks_dir] + self.extra_playbooks_dirs
+        seen_names: set = set()
         items: List[Dict[str, Any]] = []
-        for p in playbooks:
-            items.append(self._extract_playbook_info(p))
+        for pb_dir in all_dirs:
+            for p in sorted(pb_dir.glob("*.y*ml")):
+                if not p.is_file():
+                    continue
+                if p.name not in seen_names:
+                    seen_names.add(p.name)
+                    items.append(self._extract_playbook_info(p))
         return {"ok": True, "playbooks": items}
 
     def tool_list_reports(self, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
