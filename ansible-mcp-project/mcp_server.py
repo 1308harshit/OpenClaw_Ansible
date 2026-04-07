@@ -96,12 +96,14 @@ def _run(cmd: List[str], cwd: Path, timeout_s: int = 3600) -> Dict[str, Any]:
 
 
 class AnsibleMcpServer:
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path, extra_playbooks_dirs: Optional[List[Path]] = None):
         self.project_root = project_root
         self.inventory_file = _must_be_under(self.project_root, self.project_root / "inventory" / "inventory.yml")
         self.playbooks_dir = _must_be_under(self.project_root, self.project_root / "playbooks")
         self.reports_dir = _must_be_under(self.project_root, self.project_root / "reports")
         self.backups_dir = _must_be_under(self.project_root, self.project_root / "backups")
+        # Additional playbook directories to scan (e.g. ansible-project/playbooks)
+        self.extra_playbooks_dirs: List[Path] = [p for p in (extra_playbooks_dirs or []) if p.is_dir()]
 
         self.tools: Dict[str, ToolSpec] = {
             "list_inventory": ToolSpec(
@@ -313,16 +315,22 @@ class AnsibleMcpServer:
         return s2
 
     def _playbook_index(self) -> Tuple[Dict[str, Path], List[str]]:
-        files = [p for p in sorted(self.playbooks_dir.glob("*.y*ml")) if p.is_file()]
+        # Collect playbooks from primary dir first, then extra dirs (primary takes precedence on name clash)
+        all_dirs = [self.playbooks_dir] + self.extra_playbooks_dirs
         by_key: Dict[str, Path] = {}
         names: List[str] = []
-        for p in files:
-            names.append(p.name)
-            key = self._normalize_playbook_key(p.name)
-            by_key.setdefault(key, p)
-            # Simple singular fallback: unused_ports -> unused_port
-            if key.endswith("s"):
-                by_key.setdefault(key[:-1], p)
+        seen_names: set = set()
+        for pb_dir in all_dirs:
+            for p in sorted(pb_dir.glob("*.y*ml")):
+                if not p.is_file():
+                    continue
+                if p.name not in seen_names:
+                    seen_names.add(p.name)
+                    names.append(p.name)
+                key = self._normalize_playbook_key(p.name)
+                by_key.setdefault(key, p)
+                if key.endswith("s"):
+                    by_key.setdefault(key[:-1], p)
         return by_key, names
 
     def _resolve_playbook(self, playbook: str) -> Path:
@@ -330,7 +338,9 @@ class AnsibleMcpServer:
         by_key, names = self._playbook_index()
         key = self._normalize_playbook_key(q)
         if key in by_key:
-            return _must_be_under(self.project_root, by_key[key])
+            pb_path = by_key[key]
+            # Allow paths from extra_playbooks_dirs without project_root restriction
+            return pb_path
 
         # Try close matches on filename list for a helpful error.
         close = difflib.get_close_matches(q, names, n=5, cutoff=0.45)
@@ -648,8 +658,10 @@ class AnsibleMcpServer:
                 if isinstance(pb_content, list) and len(pb_content) > 0:
                     play = pb_content[0]
                     hosts = play.get("hosts", "")
-                    # Check if hosts contains localhost or localhost_linux
-                    if isinstance(hosts, str) and ("localhost" in hosts.lower() or "local" in hosts.lower()):
+                    # Check if hosts is exactly localhost or localhost_linux (avoid partial matches)
+                    _hosts_lower = hosts.lower()
+                    _localhost_targets = {"localhost", "localhost_linux", "127.0.0.1"}
+                    if isinstance(hosts, str) and (_hosts_lower in _localhost_targets or _hosts_lower.startswith("localhost")):
                         auto_vars.update({
                             "ansible_connection": "local",
                             "ansible_network_os": "",
@@ -663,7 +675,7 @@ class AnsibleMcpServer:
         if extra_vars:
             final_extra_vars.update(extra_vars)
 
-        cmd: List[str] = ["ansible-playbook", "-i", str(self.inventory_file), "--playbook-dir", str(self.project_root), str(pb)]
+        cmd: List[str] = ["ansible-playbook", "-i", str(self.inventory_file), str(pb)]
         if check:
             cmd += ["--check", "--diff"]
         if limit_v:
@@ -943,7 +955,19 @@ def main() -> None:
         _eprint("ANSIBLE_PROJECT_ROOT does not exist or is not a directory")
         sys.exit(2)
 
-    server = AnsibleMcpServer(project_root=project_root)
+    # Optional: colon-separated list of extra playbook directories to also scan
+    extra_playbooks_dirs: List[Path] = []
+    extra_raw = os.getenv("EXTRA_PLAYBOOKS_DIRS", "")
+    for raw_dir in extra_raw.split(":"):
+        raw_dir = raw_dir.strip()
+        if raw_dir:
+            p = Path(raw_dir)
+            if p.is_dir():
+                extra_playbooks_dirs.append(p)
+            else:
+                _eprint(f"EXTRA_PLAYBOOKS_DIRS: skipping non-existent dir: {raw_dir}")
+
+    server = AnsibleMcpServer(project_root=project_root, extra_playbooks_dirs=extra_playbooks_dirs)
 
     for req in _read_json_lines():
         req_id = req.get("id")

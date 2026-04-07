@@ -1,0 +1,12 @@
+[Unit]
+Description=Ansible MCP Startup - node server.js + openclaw gateway
+After=network.target
+
+[Service]
+Type=forking
+User=ansible
+ExecStart=/home/ansible/NERD_clab_topologies/clos-medium/ansible-mcp-project/startup.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
