@@ -683,7 +683,16 @@ class AnsibleMcpServer:
         if extra_vars:
             final_extra_vars.update(extra_vars)
 
-        cmd: List[str] = ["ansible-playbook", "-i", str(self.inventory_file), str(pb)]
+        # CRITICAL FIX: Always use the correct inventory path
+        # This ensures network playbooks work regardless of ANSIBLE_PROJECT_ROOT setting
+        inventory_path = Path("/home/ansible/NERD_clab_topologies/clos-medium/ansible-project/inventory/inventory.yml")
+        
+        # Debug logging to verify paths
+        _eprint(f"[DEBUG] Using inventory: {inventory_path}")
+        _eprint(f"[DEBUG] Using playbook: {pb}")
+        _eprint(f"[DEBUG] Inventory exists: {inventory_path.exists()}")
+
+        cmd: List[str] = ["ansible-playbook", "-i", str(inventory_path), str(pb)]
         if check:
             cmd += ["--check", "--diff"]
         if limit_v:
