@@ -1,0 +1,65 @@
+---
+- name: Show Containerlab Topology Status
+  hosts: fabric:routers
+  gather_facts: no
+  vars:
+    reports_dir: "{{ playbook_dir }}/../reports"
+
+  tasks:
+    - name: Create reports directory
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Get device version and uptime
+      arista.eos.eos_command:
+        commands:
+          - show version
+      register: version_result
+
+    - name: Get LLDP neighbors (topology links)
+      arista.eos.eos_command:
+        commands:
+          - show lldp neighbors
+      register: lldp_result
+
+    - name: Get interface status summary
+      arista.eos.eos_command:
+        commands:
+          - show interfaces status
+      register: intf_result
+
+    - name: Get current timestamp
+      ansible.builtin.shell: date
+      register: timestamp_result
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+
+    - name: Save topology status report
+      ansible.builtin.copy:
+        content: |
+          ============================================================
+          TOPOLOGY STATUS REPORT
+          Device: {{ inventory_hostname }}
+          Timestamp: {{ timestamp_result.stdout | default('N/A') }}
+          ============================================================
+
+          --- VERSION / UPTIME ---
+          {{ version_result.stdout[0] }}
+
+          --- LLDP NEIGHBORS (Active Links) ---
+          {{ lldp_result.stdout[0] }}
+
+          --- INTERFACE STATUS ---
+          {{ intf_result.stdout[0] }}
+        dest: "{{ reports_dir }}/{{ inventory_hostname }}_topology_status.txt"
+        mode: '0644'
+      delegate_to: localhost
+
+    - name: Display status
+      ansible.builtin.debug:
+        msg: "Topology status saved for {{ inventory_hostname }}"

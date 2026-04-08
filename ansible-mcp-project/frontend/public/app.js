@@ -105,6 +105,37 @@ go.addEventListener("click", async () => {
           progressLines.push("🤖 Processing...");
           renderProgress();
 
+        } else if (msg.type === "orchestration_plan") {
+          // Show the AI plan before execution starts
+          if (progressLines[progressLines.length - 1] === "🤖 Thinking...") progressLines.pop();
+          progressLines.push("─".repeat(60));
+          progressLines.push(`🤖 ${msg.greeting}`);
+          progressLines.push("");
+          (msg.playbooks || []).forEach((pb, i) => {
+            progressLines.push(`   ${i + 1}. 📋 ${pb}`);
+          });
+          if (msg.reasoning) progressLines.push(`\n   💡 ${msg.reasoning}`);
+          progressLines.push("─".repeat(60));
+          progressLines.push("");
+          renderProgress();
+
+        } else if (msg.type === "playbook_start") {
+          progressLines.push(`🚀 Running playbook: ${msg.playbook}`);
+          progressLines.push("   ⏳ Processing...");
+          renderProgress();
+
+        } else if (msg.type === "playbook_done") {
+          // Replace the last "Processing..." with done status
+          const last = progressLines[progressLines.length - 1];
+          if (last && last.includes("Processing...")) progressLines.pop();
+          const icon = msg.ok !== false ? "✅" : "❌";
+          const status = msg.ok !== false ? "Complete" : "Failed";
+          // Update the "Running playbook" line
+          const pbIdx = progressLines.map(l => l.includes(`Running playbook: ${msg.playbook}`)).lastIndexOf(true);
+          if (pbIdx >= 0) progressLines[pbIdx] = `${icon} Running playbook: ${msg.playbook} — ${status}`;
+          progressLines.push("");
+          renderProgress();
+
         } else if (msg.type === "result") {
           // Remove trailing "Processing..." line then show final answer
           if (progressLines[progressLines.length - 1] === "🤖 Processing...") {

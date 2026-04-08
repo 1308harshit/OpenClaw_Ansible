@@ -254,6 +254,27 @@ const TOOL_DECLARATIONS = [
       required: ["playbooks"],
     },
   },
+  {
+    name: "intelligent_playbook_orchestration",
+    description:
+      "Intelligently analyze a natural language user request, select the right combination of playbooks, show the user a plan first, then execute them in order. Use this when the user asks for something that requires multiple playbooks or when the intent is ambiguous. Returns execution plan + results.",
+    parameters: {
+      type: "object",
+      properties: {
+        user_request: {
+          type: "string",
+          description: "Natural language description of what the user wants to accomplish",
+        },
+        dry_run: {
+          type: "boolean",
+          description: "If true, only return the plan without executing. Defaults to false.",
+        },
+        limit: { type: "string" },
+        extra_vars: { type: "object" },
+      },
+      required: ["user_request"],
+    },
+  },
 ];
 
 const SYSTEM_INSTRUCTION = `
@@ -309,6 +330,16 @@ IMPORTANT:
 - Do NOT start or stop any HTTP servers (no python -m http.server).
 - Do NOT attempt to restart the frontend or change ports.
 - Assume the frontend is already running on port 8000; only provide /reports/... links.
+
+Topology Status:
+- When user says ANY of: "topology status", "show topology", "containerlab status", "clos topology", "node status", "are all nodes up", "check topology", "lab status" → run: show_topology_status.yml
+- This playbook collects version, uptime, LLDP neighbors, and interface status from all fabric devices (leaf1-4, spine1-2, R1)
+- After completion, summarize which nodes are up, their uptime, and active LLDP links
+
+Intelligent Orchestration:
+- When user asks for a COMBINATION of tasks that doesn't match a known orchestrator playbook, use the intelligent_playbook_orchestration tool.
+- This tool will plan the playbooks, show the user the plan, then execute them one by one.
+- Example: "check topology and show unused ports" → use intelligent_playbook_orchestration
 
 Fabric Audit (CRITICAL MAPPINGS):
 - When user says ANY of: "audit the full fabric", "fabric audit", "fabric report", "fabric compliance", "operations summary", "quick operations summary", "show down interfaces", "list unused ports", "verify vlan consistency", "apply baseline hardening", "generate compliance report", "compliance report", or any combination of these → ALWAYS run: fabric_audit_all.yml (the orchestrator). Do NOT break it into individual playbooks.
@@ -381,6 +412,134 @@ Link rules:
 - For other .txt reports, do NOT output a browser link; output the reports/ path and summarize the text.
 - For backups, do NOT output a browser link; output the backups/ path and summarize the text.
 `.trim();
+}
+
+// ── Intelligent Playbook Orchestration ───────────────────────────────────────
+// Uses the frontend's Gemini connection to plan + execute playbook combinations.
+// Emits SSE plan events so the UI can show the plan before execution starts.
+async function handleIntelligentOrchestration(args, onProgress) {
+  const userRequest = (args.user_request || "").trim();
+  const dryRun = args.dry_run || false;
+  const limit = args.limit || null;
+  const extraVars = args.extra_vars || null;
+
+  // Step 1: Get playbook catalog via MCP
+  const mcpTemp = startMcpProcess();
+  let catalog;
+  try {
+    const res = await mcpTemp.callTool("list_playbooks_with_summary", {});
+    catalog = res.result;
+  } finally {
+    mcpTemp.close();
+  }
+
+  const playbooks = catalog.playbooks || [];
+  const playbookLines = playbooks.map(pb => {
+    return `- ${pb.name}: hosts=${pb.hosts || "?"}, keywords=[${(pb.keywords || []).slice(0, 8).join(", ")}]`;
+  }).join("\n");
+
+  // Step 2: Ask Gemini to pick the right combination
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  const planModel = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+
+  const planPrompt = `You are an Ansible playbook orchestration assistant.
+
+Available playbooks:
+${playbookLines}
+
+User request: "${userRequest}"
+
+Select the minimal set of playbooks needed and the correct execution order.
+Respond ONLY with valid JSON in this exact format:
+{
+  "greeting": "Hello! To achieve your goal, I will run the following playbooks:",
+  "playbooks": ["playbook1.yml", "playbook2.yml"],
+  "reasoning": "One sentence explaining why these were chosen"
+}
+
+Rules:
+- Only use playbook names from the available list above
+- Order matters: prerequisites first
+- Be minimal: only include directly relevant playbooks
+- If nothing matches, return empty playbooks array`;
+
+  const planResult = await planModel.generateContent(planPrompt);
+  const planText = planResult.response.text();
+
+  // Parse JSON from Gemini response
+  let plan;
+  try {
+    const jsonMatch = planText.match(/\{[\s\S]*\}/);
+    plan = JSON.parse(jsonMatch ? jsonMatch[0] : planText);
+  } catch {
+    return {
+      tool: "intelligent_playbook_orchestration",
+      result: { ok: false, error: "Failed to parse orchestration plan from Gemini", raw: planText }
+    };
+  }
+
+  const selectedPlaybooks = plan.playbooks || [];
+
+  // Step 3: Emit the plan to the UI
+  if (onProgress) {
+    onProgress({
+      type: "orchestration_plan",
+      greeting: plan.greeting || "Hello! Here is the execution plan:",
+      playbooks: selectedPlaybooks,
+      reasoning: plan.reasoning || ""
+    });
+  }
+
+  if (dryRun || selectedPlaybooks.length === 0) {
+    return {
+      tool: "intelligent_playbook_orchestration",
+      result: {
+        ok: true,
+        dry_run: true,
+        execution_plan: { playbooks: selectedPlaybooks, reasoning: plan.reasoning }
+      }
+    };
+  }
+
+  // Step 4: Execute each playbook one by one, emitting progress per playbook
+  const mcpExec = startMcpProcess();
+  const results = [];
+  let overallOk = true;
+
+  try {
+    for (const pb of selectedPlaybooks) {
+      if (onProgress) {
+        onProgress({ type: "playbook_start", playbook: pb });
+      }
+
+      let res;
+      try {
+        const out = await mcpExec.callTool("run_playbook", { playbook: pb, limit, extra_vars: extraVars });
+        res = out.result;
+      } catch (e) {
+        res = { ok: false, error: String(e.message) };
+      }
+
+      if (onProgress) {
+        onProgress({ type: "playbook_done", playbook: pb, ok: res.ok });
+      }
+
+      results.push({ playbook: pb, ok: res.ok, stdout: res.stdout, stderr: res.stderr, error: res.error });
+      if (!res.ok) { overallOk = false; break; }
+    }
+  } finally {
+    mcpExec.close();
+  }
+
+  return {
+    tool: "intelligent_playbook_orchestration",
+    result: {
+      ok: overallOk,
+      user_request: userRequest,
+      execution_plan: { playbooks: selectedPlaybooks, reasoning: plan.reasoning },
+      execution_results: results
+    }
+  };
 }
 
 function startMcpProcess() {
@@ -458,7 +617,7 @@ function startMcpProcess() {
     });
   }
 
-  async function callTool(name, args) {
+  async function callTool(name, args, onProgress) {
     // Local-only tool (doesn't require MCP).
     if (name === "list_tools") {
       return {
@@ -472,6 +631,11 @@ function startMcpProcess() {
         },
         mcp_stderr: stderrBuf || "",
       };
+    }
+
+    // Intelligent orchestration — handled entirely in server.js using the existing Gemini connection
+    if (name === "intelligent_playbook_orchestration") {
+      return await handleIntelligentOrchestration(args, onProgress);
     }
 
     if (!initialized) {
@@ -524,6 +688,8 @@ const TOOL_LABELS = {
   run_playbook: "🚀 Running playbook",
   run_playbook_check: "🔬 Dry-running playbook (check mode)",
   run_playbooks: "🚀 Running playbook sequence",
+  intelligent_playbook_orchestration: "🧠 Intelligent orchestration — planning playbook combination",
+  show_topology_status: "🗺️  Checking containerlab topology status",
 };
 
 function toolProgressLabel(name, args) {
@@ -569,7 +735,7 @@ async function runGeminiWithTools(userText, systemInstruction, onProgress) {
 
         if (onProgress) onProgress({ type: "tool_start", name, args, label: toolProgressLabel(name, args) });
 
-        const toolOut = await mcp.callTool(name, args);
+        const toolOut = await mcp.callTool(name, args, onProgress);
         toolLog.push({ name, args, toolOut });
 
         const ok = toolOut.result?.ok !== false;
@@ -693,18 +859,18 @@ app.get("/api/history/analytics", async (req, res) => {
 
     history.forEach(item => {
       const response = String(item.response || "").toLowerCase();
-      
+
       // Check for failure indicators
-      const hasFailure = response.includes("❌") || 
-                        response.includes("failed") || 
-                        response.includes("error") ||
-                        response.includes("fatal:");
-      
+      const hasFailure = response.includes("❌") ||
+        response.includes("failed") ||
+        response.includes("error") ||
+        response.includes("fatal:");
+
       // Check for success indicators
-      const hasSuccess = response.includes("✅") || 
-                        response.includes("successfully") ||
-                        response.includes("completed") ||
-                        response.includes("pass");
+      const hasSuccess = response.includes("✅") ||
+        response.includes("successfully") ||
+        response.includes("completed") ||
+        response.includes("pass");
 
       // Prioritize failure detection
       if (hasFailure && !hasSuccess) {

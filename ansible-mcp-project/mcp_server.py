@@ -817,11 +817,12 @@ class AnsibleMcpServer:
         playbook_descriptions = []
         for pb in playbook_catalog.get("playbooks", []):
             name = pb.get("name", "")
-            summary = pb.get("summary", {})
-            hosts = summary.get("hosts", [])
-            modules = summary.get("modules", [])
-            
-            desc = f"- {name}: Targets {hosts}, uses modules {modules}"
+            summary = pb.get("summary", "")   # summary is a string (playbook display name)
+            hosts = pb.get("hosts", "")
+            modules = pb.get("modules", [])
+            keywords = pb.get("keywords", [])
+
+            desc = f"- {name}: hosts={hosts}, keywords={keywords}, modules={modules}"
             playbook_descriptions.append(desc)
 
         # Create the LLM prompt for playbook selection
@@ -851,50 +852,49 @@ Rules:
 - If the request is unclear or no playbooks match, return an empty playbooks array"""
 
         try:
-            # Call LLM API (using OpenAI-compatible endpoint)
             import os
             import json
             import urllib.request
-            
-            api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
-            api_base = os.getenv("LLM_API_BASE", "https://api.openai.com/v1")
-            model = os.getenv("LLM_MODEL", "gpt-4")
-            
+
+            api_key = os.getenv("GEMINI_API_KEY")
+            model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
             if not api_key:
                 return {
                     "ok": False,
-                    "error": "LLM_API_KEY or OPENAI_API_KEY environment variable not set. Cannot perform intelligent orchestration.",
-                    "suggestion": "Set LLM_API_KEY in your .env file to enable this feature."
+                    "error": "GEMINI_API_KEY environment variable not set. Cannot perform intelligent orchestration.",
+                    "suggestion": "Set GEMINI_API_KEY in your .env file to enable this feature."
                 }
 
-            # Prepare API request
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
-            
+            # Gemini REST API endpoint
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+            headers = {"Content-Type": "application/json"}
+
             data = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": "You are a helpful Ansible automation assistant that selects appropriate playbooks based on user requests."},
-                    {"role": "user", "content": prompt}
+                "contents": [
+                    {
+                        "parts": [{"text": prompt}]
+                    }
                 ],
-                "temperature": 0.3,
-                "max_tokens": 500
+                "generationConfig": {
+                    "temperature": 0.3,
+                    "maxOutputTokens": 500,
+                    "responseMimeType": "application/json"
+                }
             }
-            
+
             req = urllib.request.Request(
-                f"{api_base}/chat/completions",
+                gemini_url,
                 data=json.dumps(data).encode('utf-8'),
                 headers=headers
             )
-            
+
             with urllib.request.urlopen(req, timeout=30) as response:
                 result = json.loads(response.read().decode('utf-8'))
-                llm_response = result["choices"][0]["message"]["content"]
-                
-                # Parse LLM response
-                # Try to extract JSON from the response
+                llm_response = result["candidates"][0]["content"]["parts"][0]["text"]
+
+                # Parse LLM response - extract JSON
                 import re
                 json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
                 if json_match:
