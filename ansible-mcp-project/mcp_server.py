@@ -287,6 +287,33 @@ class AnsibleMcpServer:
                     "additionalProperties": False,
                 },
             ),
+            "intelligent_playbook_orchestration": ToolSpec(
+                name="intelligent_playbook_orchestration",
+                description=(
+                    "Intelligently analyze user intent and automatically select and execute the appropriate combination of playbooks. "
+                    "This tool uses LLM reasoning to understand natural language requests and map them to available playbooks. "
+                    "Example: 'I want to audit the fabric and check for unused ports' -> automatically runs fabric_audit_all.yml + show_unused_ports.yml. "
+                    "Returns the execution plan and results."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "user_request": {
+                            "type": "string",
+                            "description": "Natural language description of what the user wants to accomplish (e.g., 'audit the network and check security', 'install SQL server and verify it works')",
+                        },
+                        "limit": {"type": "string"},
+                        "tags": {"type": "string"},
+                        "extra_vars": {"type": "object"},
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "If true, only return the execution plan without running playbooks. Defaults to false.",
+                        },
+                    },
+                    "required": ["user_request"],
+                    "additionalProperties": False,
+                },
+            ),
         }
 
     def handle_tools_list(self) -> Dict[str, Any]:
@@ -769,6 +796,172 @@ class AnsibleMcpServer:
             "results": results,
         }
 
+    def tool_intelligent_playbook_orchestration(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Intelligently analyze user intent and automatically select/execute appropriate playbooks.
+        Uses LLM reasoning to map natural language to playbook combinations.
+        """
+        user_request = args.get("user_request", "").strip()
+        if not user_request:
+            raise ValueError("intelligent_playbook_orchestration: 'user_request' is required")
+
+        limit = args.get("limit")
+        tags = args.get("tags")
+        extra_vars = args.get("extra_vars")
+        dry_run = args.get("dry_run", False)
+
+        # Get all available playbooks with their descriptions
+        playbook_catalog = self.tool_list_playbooks_with_summary()
+        
+        # Build a knowledge base of playbooks
+        playbook_descriptions = []
+        for pb in playbook_catalog.get("playbooks", []):
+            name = pb.get("name", "")
+            summary = pb.get("summary", {})
+            hosts = summary.get("hosts", [])
+            modules = summary.get("modules", [])
+            
+            desc = f"- {name}: Targets {hosts}, uses modules {modules}"
+            playbook_descriptions.append(desc)
+
+        # Create the LLM prompt for playbook selection
+        prompt = f"""You are an Ansible playbook orchestration assistant. Analyze the user's request and determine which playbooks should be executed and in what order.
+
+Available Playbooks:
+{chr(10).join(playbook_descriptions)}
+
+User Request: "{user_request}"
+
+Based on the user's request, determine:
+1. Which playbooks are needed
+2. The optimal execution order
+3. Any dependencies between playbooks
+
+Respond ONLY with a JSON object in this exact format:
+{{
+    "reasoning": "Brief explanation of why these playbooks were selected",
+    "playbooks": ["playbook1.yml", "playbook2.yml"],
+    "execution_order_rationale": "Why this order makes sense"
+}}
+
+Rules:
+- Only include playbooks that exist in the available list
+- Order matters: put prerequisite playbooks first
+- Be conservative: only include playbooks directly related to the request
+- If the request is unclear or no playbooks match, return an empty playbooks array"""
+
+        try:
+            # Call LLM API (using OpenAI-compatible endpoint)
+            import os
+            import json
+            import urllib.request
+            
+            api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+            api_base = os.getenv("LLM_API_BASE", "https://api.openai.com/v1")
+            model = os.getenv("LLM_MODEL", "gpt-4")
+            
+            if not api_key:
+                return {
+                    "ok": False,
+                    "error": "LLM_API_KEY or OPENAI_API_KEY environment variable not set. Cannot perform intelligent orchestration.",
+                    "suggestion": "Set LLM_API_KEY in your .env file to enable this feature."
+                }
+
+            # Prepare API request
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            }
+            
+            data = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful Ansible automation assistant that selects appropriate playbooks based on user requests."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 500
+            }
+            
+            req = urllib.request.Request(
+                f"{api_base}/chat/completions",
+                data=json.dumps(data).encode('utf-8'),
+                headers=headers
+            )
+            
+            with urllib.request.urlopen(req, timeout=30) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                llm_response = result["choices"][0]["message"]["content"]
+                
+                # Parse LLM response
+                # Try to extract JSON from the response
+                import re
+                json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
+                if json_match:
+                    plan = json.loads(json_match.group())
+                else:
+                    plan = json.loads(llm_response)
+                
+                selected_playbooks = plan.get("playbooks", [])
+                reasoning = plan.get("reasoning", "")
+                order_rationale = plan.get("execution_order_rationale", "")
+                
+                if not selected_playbooks:
+                    return {
+                        "ok": False,
+                        "error": "No suitable playbooks found for the request",
+                        "reasoning": reasoning,
+                        "user_request": user_request
+                    }
+                
+                # If dry_run, return the plan without executing
+                if dry_run:
+                    return {
+                        "ok": True,
+                        "dry_run": True,
+                        "user_request": user_request,
+                        "execution_plan": {
+                            "playbooks": selected_playbooks,
+                            "reasoning": reasoning,
+                            "execution_order_rationale": order_rationale,
+                            "limit": limit,
+                            "tags": tags,
+                            "extra_vars": extra_vars
+                        }
+                    }
+                
+                # Execute the playbooks
+                execution_result = self.tool_run_playbooks({
+                    "playbooks": selected_playbooks,
+                    "limit": limit,
+                    "tags": tags,
+                    "extra_vars": extra_vars,
+                    "stop_on_failure": True
+                })
+                
+                return {
+                    "ok": execution_result.get("ok", False),
+                    "user_request": user_request,
+                    "execution_plan": {
+                        "playbooks": selected_playbooks,
+                        "reasoning": reasoning,
+                        "execution_order_rationale": order_rationale
+                    },
+                    "execution_results": execution_result
+                }
+                
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8') if e.fp else str(e)
+            return {
+                "ok": False,
+                "error": f"LLM API error: {e.code} - {error_body}"
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": f"Failed to perform intelligent orchestration: {str(e)}"
+            }
+
     def tool_get_playbook_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
         pb_path = self._resolve_playbook(args["playbook"])
         try:
@@ -957,6 +1150,8 @@ class AnsibleMcpServer:
             return self.tool_run_playbook_check(args)
         if name == "run_playbooks":
             return self.tool_run_playbooks(args)
+        if name == "intelligent_playbook_orchestration":
+            return self.tool_intelligent_playbook_orchestration(args)
         raise ValueError("tool not implemented")
 
 
