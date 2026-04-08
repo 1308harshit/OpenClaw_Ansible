@@ -361,13 +361,15 @@ function getBaseUrl(req) {
 
 function buildSystemInstruction(baseUrl) {
   // Provide runtime base URL so the model can output absolute links without hardcoding an IP.
-  // Use a full URL ONLY for the switch summary dashboard.
+  // Reports are served on port 9000 via Python HTTP server
+  const reportsBaseUrl = baseUrl.replace(':8000', ':9000');
   return `${SYSTEM_INSTRUCTION}
 
 Base URL: ${baseUrl}
+Reports Base URL: ${reportsBaseUrl}
 Link rules:
-- For switch summary dashboard, output the full link: ${baseUrl}/reports/switch_summary/index.html
-- For fabric compliance report, output the full link: ${baseUrl}/reports/fabric_compliance/index.html
+- For switch summary dashboard, output the full link: ${reportsBaseUrl}/switch_summary/index.html
+- For fabric compliance report, output the full link: ${reportsBaseUrl}/fabric_compliance/index.html
 - For other .txt reports, do NOT output a browser link; output the reports/ path and summarize the text.
 - For backups, do NOT output a browser link; output the backups/ path and summarize the text.
 `.trim();
