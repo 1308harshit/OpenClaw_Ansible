@@ -115,7 +115,7 @@
           <html lang="en">
           <head>
             <meta charset="UTF-8">
-            <title>Network Compliance Report</title>
+            <title>Fabric Compliance Report</title>
             <style>
               * { box-sizing: border-box; margin: 0; padding: 0; }
               body { font-family: Arial, sans-serif; background: #f4f6f8; padding: 30px; color: #222; }
@@ -149,7 +149,7 @@
             </style>
           </head>
           <body>
-            <h1>Network Compliance Report</h1>
+            <h1>Fabric Compliance Report</h1>
             <div class="meta">
               Generated: <span class="pill">{{ timestamp_result.stdout }}</span>
               &nbsp;|&nbsp; Source: <code>fabric:routers</code>
@@ -221,8 +221,8 @@
                 {% for d in compliance_entries | sort(attribute='hostname') %}
                   <tr>
                     <td>{{ d.hostname }}</td>
-                    <td><a href="/reports/{{ d.hostname }}_interfaces_all.txt">{{ d.hostname }}_interfaces_all.txt</a></td>
-                    <td><a href="/reports/{{ d.hostname }}_unused_ports.txt">{{ d.hostname }}_unused_ports.txt</a></td>
+                    <td><a href="/interfaces_summary/{{ d.hostname }}_interfaces.txt">{{ d.hostname }}_interfaces.txt</a></td>
+                    <td><a href="/{{ d.hostname }}_unused_ports.txt">{{ d.hostname }}_unused_ports.txt</a></td>
                     <td><span class="badge info">Collected</span></td>
                   </tr>
                 {% endfor %}
@@ -245,7 +245,7 @@
                 {% for d in compliance_entries | sort(attribute='hostname') %}
                   <tr>
                     <td>{{ d.hostname }}</td>
-                    <td><a href="/reports/{{ d.hostname }}_vlans.txt">{{ d.hostname }}_vlans.txt</a></td>
+                    <td><a href="/vlan_consistency/{{ d.hostname }}_vlans.txt">{{ d.hostname }}_vlans.txt</a></td>
                     <td><span class="badge pass">Verified</span></td>
                   </tr>
                 {% endfor %}

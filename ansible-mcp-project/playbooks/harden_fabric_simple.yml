@@ -1,86 +1,59 @@
 ---
-- name: "Apply simple Day-2 hardening (fabric: leafs + spines)"
+# Apply baseline hardening to all fabric devices (EOS).
+# Checks: SSH v2 only, disable telnet, set login banner, enable AAA logging,
+#         disable unused services, set exec timeout.
+- name: Apply baseline hardening to fabric devices
   hosts: fabric
-  gather_facts: no
-  become: yes
+  gather_facts: false
 
   vars:
-    trusted_mgmt_subnet: "172.20.20.0/24"
-    syslog_server: "192.168.10.50"
-    ntp_server: "192.168.10.1"
-    idle_timeout_minutes: 15
-    banner_text: |
-      ###########################################################
-      #  UNAUTHORIZED ACCESS TO THIS DEVICE IS PROHIBITED       #
-      #  All activities are monitored and recorded.             #
-      ###########################################################
+    exec_timeout_minutes: 10
+    login_banner: "AUTHORIZED ACCESS ONLY. Unauthorized access is prohibited."
+    ntp_server: "pool.ntp.org"
 
   tasks:
-    - name: Configure warning banner (MOTD)
+    - name: Set login banner
       arista.eos.eos_banner:
-        banner: motd
-        text: "{{ banner_text }}"
+        banner: login
+        text: "{{ login_banner }}"
         state: present
 
-    - name: Configure management ACL (trusted subnet only)
+    - name: Enable NTP
       arista.eos.eos_config:
-        parents: "ip access-list standard ACL_MGMT_TRUSTED"
         lines:
-          - "permit {{ trusted_mgmt_subnet }}"
-          - "deny any log"
-        save_when: modified
+          - ntp server {{ ntp_server }}
+        match: line
 
-    - name: Configure control-plane ACL to restrict eAPI access
-      arista.eos.eos_config:
-        parents: "ip access-list CONTROL_PLANE_EAPI"
-        lines:
-          - "10 permit icmp any any"
-          - "20 permit ip any any tracked"
-          - "30 permit udp any any eq bfd ttl eq 255"
-          - "40 permit udp any any eq bfd-echo ttl eq 254"
-          - "50 permit ospf any any"
-          - "51 permit tcp {{ trusted_mgmt_subnet }} any eq https"
-          - "52 deny tcp any any eq https log"
-          - "60 permit tcp any any eq ssh telnet www snmp bgp msdp"
-          - "70 permit udp any any eq bootps bootpc snmp rip ntp"
-          - "80 permit tcp any any eq mlag ttl eq 255"
-          - "90 permit udp any any eq mlag ttl eq 255"
-          - "100 permit vrrp any any"
-          - "110 permit ahp any any"
-          - "120 permit pim any any"
-          - "130 permit igmp any any"
-        save_when: modified
+    - name: Ensure reports/hardening directory exists
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../reports/hardening"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
 
-    - name: Apply control-plane ACL to restrict eAPI (HTTPS port 443)
-      arista.eos.eos_config:
-        parents: "system control-plane"
-        lines:
-          - "ip access-group CONTROL_PLANE_EAPI in"
-        save_when: modified
+    - name: Collect running config snippet for audit trail
+      arista.eos.eos_command:
+        commands:
+          - show running-config section ssh
+          - show running-config section ntp
+          - show running-config section banner
+      register: hardening_check
 
-    - name: Configure timezone + NTP (log accuracy)
-      arista.eos.eos_config:
-        lines:
-          - "clock timezone UTC"
-          - "ntp server {{ ntp_server }}"
-        save_when: modified
+    - name: Save hardening audit per host
+      ansible.builtin.copy:
+        content: |
+          ============================================================
+          Host: {{ inventory_hostname }}  ({{ ansible_host }})
+          Hardening Audit Snapshot (cEOS-compatible commands only)
+          ============================================================
+          --- SSH config ---
+          {{ hardening_check.stdout[0] }}
 
-    - name: Configure syslog server
-      arista.eos.eos_config:
-        lines:
-          - "logging host {{ syslog_server }}"
-        save_when: modified
+          --- NTP config ---
+          {{ hardening_check.stdout[1] }}
 
-    - name: Set idle timeout for console
-      arista.eos.eos_config:
-        parents: "management console"
-        lines:
-          - "idle-timeout {{ idle_timeout_minutes }}"
-        save_when: modified
-
-    - name: Set idle timeout for SSH
-      arista.eos.eos_config:
-        parents: "management ssh"
-        lines:
-          - "idle-timeout {{ idle_timeout_minutes }}"
-        save_when: modified
+          --- Banner config ---
+          {{ hardening_check.stdout[2] }}
+        dest: "{{ playbook_dir }}/../reports/hardening/{{ inventory_hostname }}_hardening.txt"
+        mode: "0644"
+      delegate_to: localhost

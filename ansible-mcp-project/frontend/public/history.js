@@ -1,4 +1,5 @@
 let allHistory = [];
+let analyticsChart = null;
 
 async function loadHistory() {
   try {
@@ -7,6 +8,7 @@ async function loadHistory() {
     allHistory = await res.json();
     displayHistory(allHistory);
     updateStats(allHistory);
+    await loadAnalytics();
   } catch (e) {
     document.getElementById("history-container").innerHTML = `
       <div class="no-history">
@@ -14,6 +16,67 @@ async function loadHistory() {
       </div>
     `;
   }
+}
+
+async function loadAnalytics() {
+  try {
+    const res = await fetch("/api/history/analytics");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const analytics = await res.json();
+    
+    document.getElementById("success-rate").textContent = `${analytics.successRate}%`;
+    renderChart(analytics);
+  } catch (e) {
+    console.error("Failed to load analytics:", e);
+  }
+}
+
+function renderChart(analytics) {
+  const ctx = document.getElementById("analytics-chart");
+  
+  if (analyticsChart) {
+    analyticsChart.destroy();
+  }
+
+  analyticsChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Success', 'Failure'],
+      datasets: [{
+        data: [analytics.success, analytics.failure],
+        backgroundColor: ['#10b981', '#ef4444'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: 1,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: {
+            padding: 10,
+            font: {
+              size: 11
+            }
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const label = context.label || '';
+              const value = context.parsed || 0;
+              const total = analytics.total;
+              const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+              return `${label}: ${value} (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
 }
 
 function displayHistory(history) {

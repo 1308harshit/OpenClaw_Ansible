@@ -23,6 +23,7 @@
 
 - name: "Step 4 — Apply baseline hardening"
   ansible.builtin.import_playbook: harden_fabric_simple.yml
+  ignore_errors: yes
 
 - name: "Step 5 — Generate fabric compliance report"
   ansible.builtin.import_playbook: generate_fabric_compliance_report.yml

@@ -85,6 +85,18 @@
       text-align: center;
     }
 
+    /* Chart container spans full width on mobile */
+    .stat-item:has(#analytics-chart) {
+      grid-column: 1 / -1;
+      max-width: 300px;
+      margin: 0 auto;
+    }
+
+    #analytics-chart {
+      max-width: 100%;
+      height: auto;
+    }
+
     .stat-value {
       font-size: 26px;
       font-weight: 700;
@@ -277,6 +289,16 @@
         font-size: 26px;
       }
 
+      /* Stats: 3 columns + chart */
+      .stats {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .stat-item:has(#analytics-chart) {
+        grid-column: 1 / -1;
+        max-width: 250px;
+      }
+
       /* Filters: search + buttons in one row */
       .filters {
         flex-direction: row;
@@ -319,8 +341,15 @@
         font-size: 30px;
       }
 
+      /* Stats: 4 columns with chart on right */
       .stats {
+        grid-template-columns: repeat(4, 1fr);
         padding: 16px 24px;
+      }
+
+      .stat-item:has(#analytics-chart) {
+        grid-column: auto;
+        max-width: 180px;
       }
 
       .stat-value {
@@ -362,6 +391,13 @@
         <span class="stat-value" id="today-queries">0</span>
         <span class="stat-label">Today</span>
       </div>
+      <div class="stat-item">
+        <span class="stat-value" id="success-rate">0%</span>
+        <span class="stat-label">Success Rate</span>
+      </div>
+      <div class="stat-item">
+        <canvas id="analytics-chart" width="120" height="120"></canvas>
+      </div>
     </div>
 
     <!-- ── Filters ─────────────────────────────────────────────── -->
@@ -381,6 +417,7 @@
 
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="history.js"></script>
 </body>
 
