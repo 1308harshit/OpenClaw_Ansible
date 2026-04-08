@@ -196,7 +196,25 @@
     - name: Set Vault credentials from existing file
       ansible.builtin.set_fact:
         vault_root_token: "{{ (existing_vault_data.content | b64decode | from_json).root_token }}"
+        vault_unseal_key: "{{ (existing_vault_data.content | b64decode | from_json).unseal_keys_b64[0] }}"
       when: not vault_init_output.changed and existing_vault_data is defined
+
+    - name: Check if Vault is sealed
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/health"
+        method: GET
+        status_code: [200, 429, 473, 501, 503]
+        return_content: yes
+      register: vault_seal_status
+      environment:
+        VAULT_ADDR: "{{ vault_addr }}"
+
+    - name: Unseal Vault if sealed
+      ansible.builtin.shell: |
+        {{ vault_install_dir }}/vault operator unseal {{ vault_unseal_key }}
+      environment:
+        VAULT_ADDR: "{{ vault_addr }}"
+      when: vault_seal_status.json.sealed is defined and vault_seal_status.json.sealed
 
     - name: Enable PKI secrets engine
       ansible.builtin.shell: |

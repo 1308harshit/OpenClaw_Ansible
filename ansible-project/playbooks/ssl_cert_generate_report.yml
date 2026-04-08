@@ -11,7 +11,7 @@
     ansible_become_method: sudo
     ssl_cert_path: "/etc/nginx/ssl/server.crt"
     ssl_key_path: "/etc/nginx/ssl/server.key"
-    report_dir: "{{ lookup('env', 'ANSIBLE_PROJECT_ROOT') | default('/home/ansible/NERD_clab_topologies/clos-medium/ansible-project', true) }}/reports/ssl_report"
+    report_dir: "{{ lookup('env', 'ANSIBLE_PROJECT_ROOT') | default('/home/ansible/NERD_clab_topologies/clos-medium/ansible-mcp-project', true) }}/reports/ssl_report"
     report_file: "index.html"
 
   tasks:
@@ -190,6 +190,6 @@
           - "=== How to View ==="
           - "The HTML report is automatically served by the frontend."
           - "Access it via the MCP AI response link or directly at:"
-          - "http://{{ cert.ip_address }}:8000/reports/ssl_report/index.html"
+          - "http://{{ cert.ip_address }}:9000/ssl_report/index.html"
           - ""
           - "════════════════════════════════════════"

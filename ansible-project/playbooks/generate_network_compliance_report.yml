@@ -4,7 +4,7 @@
   gather_facts: no
 
   vars:
-    reports_dir: "{{ playbook_dir }}/../reports"
+    reports_dir: "{{ playbook_dir }}/../../ansible-mcp-project/reports"
     compliance_dir: "{{ reports_dir }}/compliance"
     dashboard_file: "{{ compliance_dir }}/index.html"
     json_file: "{{ compliance_dir }}/compliance_report.json"

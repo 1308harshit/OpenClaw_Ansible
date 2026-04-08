@@ -99,7 +99,7 @@
           - "MCP Frontend (HTTPS): https://snoopy.timlam007.com"
           - "Vault UI (HTTPS): https://snoopy.timlam007.com/vault-ui/"
           - "Direct Frontend (HTTP): http://{{ server_ip }}:8000"
-          - "SSL Report: https://snoopy.timlam007.com/reports/ssl_report/index.html"
+          - "SSL Report: https://snoopy.timlam007.com/ssl_report/index.html"
           - ""
           - "=== Demo Workflow ==="
           - "1. Verify: Run 'Check SSL certificate status'"

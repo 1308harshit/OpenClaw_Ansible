@@ -60,7 +60,7 @@
   tasks:
     - name: Remove SSL demo reports
       ansible.builtin.file:
-        path: "{{ lookup('env', 'ANSIBLE_PROJECT_ROOT') | default('/home/ansible/NERD_clab_topologies/clos-medium/ansible-project', true) }}/reports/ssl_report"
+        path: "{{ lookup('env', 'ANSIBLE_PROJECT_ROOT') | default('/home/ansible/NERD_clab_topologies/clos-medium/ansible-mcp-project', true) }}/reports/ssl_report"
         state: absent
       ignore_errors: yes
 

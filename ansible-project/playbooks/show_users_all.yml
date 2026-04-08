@@ -3,7 +3,7 @@
   hosts: all_devices
   gather_facts: no
   vars:
-    reports_dir: "{{ playbook_dir }}/../reports/users"
+    reports_dir: "{{ playbook_dir }}/../../ansible-mcp-project/reports/users"
 
   tasks:
     - name: Get current timestamp
