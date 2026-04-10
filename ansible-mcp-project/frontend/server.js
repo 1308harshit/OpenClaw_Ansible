@@ -333,6 +333,11 @@ IMPORTANT:
 
 Topology Status:
 - When user says ANY of: "topology status", "show topology", "containerlab status", "clos topology", "node status", "are all nodes up", "check topology", "lab status" → run: show_topology_status.yml
+
+SSL Certificate Workflows:
+- When user says "renew ssl", "renew certificate", "ssl expired", "fix ssl", "renew the ssl certificate for snoopy", or similar → ALWAYS call: intelligent_playbook_orchestration. It will run: ssl_cert_check_expiry.yml → ssl_cert_deploy_new.yml → ssl_cert_generate_report.yml in sequence.
+- When user says "make cert expire", "make certificate expire", "simulate expiry", "demo expire" → call: intelligent_playbook_orchestration. It will run: ssl_cert_make_expire.yml → ssl_cert_check_expiry.yml.
+- After SSL renewal completes, provide the SSL report link: https://snoopy.timlam007.com/reports/ssl_report/index.html
 - This playbook collects version, uptime, LLDP neighbors, and interface status from all fabric devices (leaf1-4, spine1-2, R1)
 - After completion, summarize which nodes are up, their uptime, and active LLDP links
 
@@ -341,12 +346,11 @@ Intelligent Orchestration:
 - This tool will plan the playbooks, show the user the plan, then execute them one by one.
 - Example: "check topology and show unused ports" → use intelligent_playbook_orchestration
 
-Fabric Audit (CRITICAL MAPPINGS):
-- When user says ANY of: "audit the full fabric", "fabric audit", "fabric report", "fabric compliance", "operations summary", "quick operations summary", "show down interfaces", "list unused ports", "verify vlan consistency", "apply baseline hardening", "generate compliance report", "compliance report", or any combination of these → ALWAYS run: fabric_audit_all.yml (the orchestrator). Do NOT break it into individual playbooks.
-- fabric_audit_all.yml runs these steps in sequence: show_interfaces_all.yml → show_unused_ports.yml → check_vlan_consistency.yml → harden_fabric_simple.yml → generate_fabric_compliance_report.yml
-- After fabric_audit_all.yml completes, ALWAYS provide the compliance report link: /reports/fabric_compliance/index.html
-- For the fabric compliance report, use the full URL: BASE_URL/reports/fabric_compliance/index.html
-- IMPORTANT: Even if the hardening step fails (common in containerlab), the report is still generated successfully. Do NOT show ❌ for fabric_audit_all.yml if the report was created. Show ✅ and mention "Hardening step had errors (expected in demo environment) but report generated successfully."
+Intelligent Orchestration — Fabric Audit Queries:
+- When user says ANY of: "audit the full fabric", "fabric audit", "fabric report", "fabric compliance", "operations summary", "quick operations summary", "show down interfaces", "list unused ports", "verify vlan consistency", "apply baseline hardening", "generate compliance report", "compliance report", "audit the network", "generate fabric report", or any combination of these → ALWAYS call: intelligent_playbook_orchestration with user_request set to the user's exact message. Do NOT call run_playbook(fabric_audit_all.yml) directly.
+- The orchestration tool will intelligently select the correct individual playbooks, show the user a plan, and execute them one by one with live progress.
+- After completion, provide the compliance report link: BASE_URL/reports/fabric_compliance/index.html
+- IMPORTANT: Even if the hardening step fails (common in containerlab), the report is still generated. Mention "Hardening step had errors (expected in demo environment) but report generated successfully."
 - Also call summarize_unused_ports_reports() after the audit to report which device has the most unused ports.
 
 Network Compliance Report (CRITICAL DISTINCTION):
@@ -370,24 +374,9 @@ Anti-half-response checklist (MANDATORY):
   4) Next steps (one line)
 
 Multi-Playbook Combo Prompts:
-- When the user asks for multiple operations in a single prompt, use the FASTEST path available:
-
-FAST PATH — Known orchestrator playbooks (single run_playbook call):
-- "audit the full fabric", "full fabric audit", "operations summary", "audit and compliance", or any prompt mentioning 3+ of [interfaces, unused ports, VLAN, hardening, compliance report] → ALWAYS run: fabric_audit_all.yml (single call, fastest)
-
-DYNAMIC PATH — Unknown combos (use run_playbooks with a list):
-- When the user asks for 2+ operations that don't match a known orchestrator playbook, call run_playbooks with the ordered list of playbook filenames.
-- ALWAYS call list_playbooks_with_summary FIRST to resolve exact filenames before building the list.
-- Example combos and their run_playbooks lists:
-  - "show interfaces and check VLANs" → ["show_interfaces_all.yml", "check_vlan_consistency.yml"]
-  - "check VLANs and harden the fabric" → ["check_vlan_consistency.yml", "harden_fabric_simple.yml"]
-  - "show unused ports and generate compliance report" → ["show_unused_ports.yml", "generate_fabric_compliance_report.yml"]
-  - "show interfaces, unused ports, and VLANs" → ["show_interfaces_all.yml", "show_unused_ports.yml", "check_vlan_consistency.yml"]
-- Pass limit/tags/extra_vars if the user specifies a scope (e.g. "for leafs only" → limit: "leafs").
-- Set stop_on_failure: false if the user wants best-effort (e.g. "run all even if one fails").
-- After run_playbooks completes, summarize each playbook's ok/fail status and provide report links where applicable.
-
-FALLBACK — Sequential run_playbook calls (existing loop handles this automatically if needed).
+- When the user asks for multiple operations in a single prompt, use intelligent_playbook_orchestration — it handles planning, showing the user a plan, and executing in sequence.
+- NEVER call run_playbook(fabric_audit_all.yml) directly — always use intelligent_playbook_orchestration for fabric audit queries.
+- For simple single-playbook requests that don't match a known combo, use run_playbook directly.
 `.trim();
 
 function getBaseUrl(req) {
@@ -417,13 +406,126 @@ Link rules:
 // ── Intelligent Playbook Orchestration ───────────────────────────────────────
 // Uses the frontend's Gemini connection to plan + execute playbook combinations.
 // Emits SSE plan events so the UI can show the plan before execution starts.
+
+// Rule Boost Layer: pre-validated playbook sets for known critical query patterns.
+// Checked BEFORE calling Gemini — guarantees correctness for high-stakes flows.
+const RULE_BOOST_MAP = [
+  {
+    keywords: [
+      "fabric report", "fabric audit", "audit the network", "audit network",
+      "compliance report", "generate report", "operations summary",
+      "fabric compliance", "full audit", "generate fabric", "audit fabric",
+      "quick operations", "show down interfaces", "list unused ports",
+      "verify vlan", "apply baseline", "apply hardening"
+    ],
+    playbooks: [
+      "show_interfaces_all.yml",
+      "show_unused_ports.yml",
+      "check_vlan_consistency.yml",
+      "harden_fabric_simple.yml",
+      "generate_fabric_compliance_report.yml"
+    ],
+    stop_on_failure: false  // hardening may fail in cEOS — continue to report anyway
+  },
+  {
+    keywords: ["check vlan", "vlan consistency", "verify vlan", "vlan check"],
+    playbooks: ["check_vlan_consistency.yml"],
+    stop_on_failure: true
+  },
+  {
+    keywords: ["show interfaces", "interface status", "show all interfaces"],
+    playbooks: ["show_interfaces_all.yml"],
+    stop_on_failure: true
+  },
+  {
+    keywords: ["unused ports", "show unused", "unused port"],
+    playbooks: ["show_unused_ports.yml"],
+    stop_on_failure: true
+  },
+  {
+    keywords: ["topology status", "show topology", "containerlab status", "lab status", "node status", "are all nodes"],
+    playbooks: ["show_topology_status.yml"],
+    stop_on_failure: true
+  },
+  {
+    // SSL certificate renewal — check expiry, deploy new cert from Vault, generate report
+    keywords: [
+      "renew ssl", "renew certificate", "ssl renew", "certificate renew",
+      "ssl expired", "certificate expired", "fix ssl", "fix certificate",
+      "ssl cert expired", "cert expired", "renew the ssl", "renew the cert",
+      "ssl for snoopy", "certificate for snoopy", "renew snoopy"
+    ],
+    playbooks: [
+      "ssl_cert_check_expiry.yml",
+      "ssl_cert_deploy_new.yml",
+      "ssl_cert_generate_report.yml"
+    ],
+    stop_on_failure: false  // check expiry first, then deploy even if check shows expired
+  },
+  {
+    // Full demo environment setup — Vault must come before Nginx
+    keywords: [
+      "reinstall nginx", "reinstall the demo", "setup demo", "set up demo",
+      "install demo", "rebuild demo", "reset demo environment",
+      "nginx is uninstalled", "nginx uninstalled", "setup the environment"
+    ],
+    playbooks: [
+      "vault_install_configure.yml",
+      "nginx_install_configure.yml",
+      "nginx_start.yml",
+      "ssl_cert_check_expiry.yml",
+      "ssl_cert_generate_report.yml"
+    ],
+    stop_on_failure: true
+  },
+  {
+    // Make SSL cert expire (demo trick)
+    keywords: [
+      "make cert expire", "make certificate expire", "expire the cert",
+      "expire ssl", "make ssl expire", "simulate expiry", "demo expire",
+      "make the ssl", "make the certificate", "ssl certificate expire",
+      "certificate expire for snoopy", "ssl expire for snoopy",
+      "make it expire", "force expire", "set cert expire"
+    ],
+    playbooks: [
+      "ssl_cert_make_expire.yml",
+      "ssl_cert_check_expiry.yml"
+    ],
+    stop_on_failure: false
+  }
+];
+
+function applyRuleBoost(userRequest) {
+  const q = userRequest.toLowerCase();
+  for (const rule of RULE_BOOST_MAP) {
+    if (rule.keywords.some(kw => q.includes(kw))) {
+      return { forcedPlaybooks: rule.playbooks, stop_on_failure: rule.stop_on_failure };
+    }
+  }
+  return null; // no match — fall through to pure AI
+}
+
 async function handleIntelligentOrchestration(args, onProgress) {
   const userRequest = (args.user_request || "").trim();
   const dryRun = args.dry_run || false;
   const limit = args.limit || null;
   const extraVars = args.extra_vars || null;
 
-  // Step 1: Get playbook catalog via MCP
+  // ── Step 1: Rule Boost — check known critical patterns first (no AI needed) ──
+  const ruleMatch = applyRuleBoost(userRequest);
+  let forcedPlaybooks = [];
+  let stopOnFailure = true;
+  let greeting = "Hello! Here is the execution plan:";
+  let reasoning = "";
+
+  if (ruleMatch) {
+    forcedPlaybooks = ruleMatch.forcedPlaybooks;
+    stopOnFailure = ruleMatch.stop_on_failure;
+    greeting = "Hello! Based on your request, I've identified the following playbooks to run:";
+    reasoning = "Selected based on known workflow for this type of request.";
+  }
+
+  // ── Step 2: Fetch enriched catalog ──
   const mcpTemp = startMcpProcess();
   let catalog;
   try {
@@ -433,84 +535,105 @@ async function handleIntelligentOrchestration(args, onProgress) {
     mcpTemp.close();
   }
 
-  const playbooks = catalog.playbooks || [];
-  const playbookLines = playbooks.map(pb => {
-    return `- ${pb.name}: hosts=${pb.hosts || "?"}, keywords=[${(pb.keywords || []).slice(0, 8).join(", ")}]`;
-  }).join("\n");
+  // Format catalog for plan model — exclude fabric_audit_all.yml (legacy orchestrator)
+  const playbookLines = (catalog.playbooks || [])
+    .filter(pb => pb.name !== "fabric_audit_all.yml")
+    .map(pb => {
+      const desc = pb.description || pb.summary || pb.name;
+      const kws = [...new Set([...(pb.intent_keywords || []), ...(pb.keywords || [])])].slice(0, 10);
+      return `- ${pb.name}: ${desc} | hosts=${pb.hosts || "?"} | keywords=[${kws.join(", ")}]`;
+    }).join("\n");
 
-  // Step 2: Ask Gemini to pick the right combination
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  const planModel = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+  // ── Step 3: AI Planning (only when no rule match) ──
+  let aiPlaybooks = [];
+  if (!ruleMatch) {
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const planModel = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-  const planPrompt = `You are an Ansible playbook orchestration assistant.
+    const planPrompt = `You are an Ansible playbook orchestration assistant for a network fabric.
+
+IMPORTANT RULES:
+1. NEVER select "fabric_audit_all.yml" — it is a legacy orchestrator, not an individual task.
+2. Only select playbooks from the Available Playbooks list below. NEVER invent or guess playbook names.
+3. If a playbook name is not in the Available Playbooks list, do NOT include it. Return empty array instead.
+4. Order matters: prerequisites first (interfaces → unused ports → vlans → hardening → compliance report).
+5. Be minimal: only include playbooks directly relevant to the user's request.
+6. If the request mentions "compliance report" or "fabric report", always include generate_fabric_compliance_report.yml LAST, and include its prerequisites.
+7. If the request is too vague or nothing matches, return empty playbooks array.
+8. Set stop_on_failure to false when harden_fabric_simple.yml is included (it may fail in demo env).
 
 Available playbooks:
 ${playbookLines}
 
 User request: "${userRequest}"
 
-Select the minimal set of playbooks needed and the correct execution order.
-Respond ONLY with valid JSON in this exact format:
+Respond ONLY with valid JSON:
 {
   "greeting": "Hello! To achieve your goal, I will run the following playbooks:",
   "playbooks": ["playbook1.yml", "playbook2.yml"],
-  "reasoning": "One sentence explaining why these were chosen"
-}
+  "reasoning": "One sentence explaining why these were chosen",
+  "stop_on_failure": true
+}`;
 
-Rules:
-- Only use playbook names from the available list above
-- Order matters: prerequisites first
-- Be minimal: only include directly relevant playbooks
-- If nothing matches, return empty playbooks array`;
+    let planText;
+    try {
+      const planResult = await planModel.generateContent(planPrompt);
+      planText = planResult.response.text();
+    } catch (e) {
+      return {
+        tool: "intelligent_playbook_orchestration",
+        result: { ok: false, error: `Gemini plan model error: ${e.message}` }
+      };
+    }
 
-  const planResult = await planModel.generateContent(planPrompt);
-  const planText = planResult.response.text();
+    let plan;
+    try {
+      const jsonMatch = planText.match(/\{[\s\S]*\}/);
+      plan = JSON.parse(jsonMatch ? jsonMatch[0] : planText);
+    } catch {
+      return {
+        tool: "intelligent_playbook_orchestration",
+        result: { ok: false, error: "Failed to parse orchestration plan from Gemini", raw: planText }
+      };
+    }
 
-  // Parse JSON from Gemini response
-  let plan;
-  try {
-    const jsonMatch = planText.match(/\{[\s\S]*\}/);
-    plan = JSON.parse(jsonMatch ? jsonMatch[0] : planText);
-  } catch {
-    return {
-      tool: "intelligent_playbook_orchestration",
-      result: { ok: false, error: "Failed to parse orchestration plan from Gemini", raw: planText }
-    };
+    // Server-side safety filter — never allow fabric_audit_all.yml through
+    // Also strip any hallucinated names not in the actual catalog
+    const validNames = new Set((catalog.playbooks || []).map(pb => pb.name));
+    aiPlaybooks = (plan.playbooks || []).filter(pb => pb !== "fabric_audit_all.yml" && validNames.has(pb));
+    stopOnFailure = plan.stop_on_failure !== undefined ? plan.stop_on_failure : true;
+    greeting = plan.greeting || greeting;
+    reasoning = plan.reasoning || reasoning;
   }
 
-  const selectedPlaybooks = plan.playbooks || [];
+  // ── Step 4: Merge forced + AI playbooks (forced order preserved, AI appends extras) ──
+  const finalPlaybooks = [...forcedPlaybooks];
+  for (const pb of aiPlaybooks) {
+    if (!finalPlaybooks.includes(pb) && pb !== "fabric_audit_all.yml") {
+      finalPlaybooks.push(pb);
+    }
+  }
 
-  // Step 3: Emit the plan to the UI
+  // ── Step 5: Emit plan to UI ──
   if (onProgress) {
-    onProgress({
-      type: "orchestration_plan",
-      greeting: plan.greeting || "Hello! Here is the execution plan:",
-      playbooks: selectedPlaybooks,
-      reasoning: plan.reasoning || ""
-    });
+    onProgress({ type: "orchestration_plan", greeting, playbooks: finalPlaybooks, reasoning });
   }
 
-  if (dryRun || selectedPlaybooks.length === 0) {
+  if (dryRun || finalPlaybooks.length === 0) {
     return {
       tool: "intelligent_playbook_orchestration",
-      result: {
-        ok: true,
-        dry_run: true,
-        execution_plan: { playbooks: selectedPlaybooks, reasoning: plan.reasoning }
-      }
+      result: { ok: true, dry_run: true, execution_plan: { playbooks: finalPlaybooks, reasoning } }
     };
   }
 
-  // Step 4: Execute each playbook one by one, emitting progress per playbook
+  // ── Step 6: Execute each playbook one by one ──
   const mcpExec = startMcpProcess();
   const results = [];
   let overallOk = true;
 
   try {
-    for (const pb of selectedPlaybooks) {
-      if (onProgress) {
-        onProgress({ type: "playbook_start", playbook: pb });
-      }
+    for (const pb of finalPlaybooks) {
+      if (onProgress) onProgress({ type: "playbook_start", playbook: pb });
 
       let res;
       try {
@@ -520,12 +643,13 @@ Rules:
         res = { ok: false, error: String(e.message) };
       }
 
-      if (onProgress) {
-        onProgress({ type: "playbook_done", playbook: pb, ok: res.ok });
-      }
-
+      if (onProgress) onProgress({ type: "playbook_done", playbook: pb, ok: res.ok });
       results.push({ playbook: pb, ok: res.ok, stdout: res.stdout, stderr: res.stderr, error: res.error });
-      if (!res.ok) { overallOk = false; break; }
+
+      if (!res.ok) {
+        overallOk = false;
+        if (stopOnFailure) break;
+      }
     }
   } finally {
     mcpExec.close();
@@ -536,7 +660,7 @@ Rules:
     result: {
       ok: overallOk,
       user_request: userRequest,
-      execution_plan: { playbooks: selectedPlaybooks, reasoning: plan.reasoning },
+      execution_plan: { playbooks: finalPlaybooks, reasoning },
       execution_results: results
     }
   };

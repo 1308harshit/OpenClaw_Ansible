@@ -32,6 +32,96 @@ from dotenv import load_dotenv
 
 SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.,:-]+$")
 
+# Curated playbook metadata — overlaid on top of auto-extracted info.
+# Provides intent-level descriptions and keywords so Gemini can accurately
+# select playbooks from natural-language requests.
+PLAYBOOK_CATALOG: Dict[str, Dict[str, Any]] = {
+    "show_interfaces_all.yml": {
+        "description": "Collects interface status from all fabric devices and routers. Saves per-device reports to reports/.",
+        "intent_keywords": ["interfaces", "interface status", "show interfaces", "port status", "link status", "show all interfaces"],
+        "hosts": "fabric + routers",
+        "produces": "reports/*_interfaces_all.txt",
+        "order_hint": 1,
+    },
+    "show_unused_ports.yml": {
+        "description": "Identifies unused, disabled, or notconnect ports on all fabric devices. Saves per-device unused port reports.",
+        "intent_keywords": ["unused ports", "disabled ports", "notconnect", "idle ports", "port utilization", "unused"],
+        "hosts": "fabric + routers",
+        "produces": "reports/*_unused_ports.txt",
+        "order_hint": 2,
+    },
+    "check_vlan_consistency.yml": {
+        "description": "Verifies VLAN database consistency across all fabric switches. Saves per-device VLAN reports.",
+        "intent_keywords": ["vlan", "vlan consistency", "check vlan", "vlan check", "vlan verification", "layer 2"],
+        "hosts": "fabric",
+        "produces": "reports/*_vlans.txt",
+        "order_hint": 3,
+    },
+    "harden_fabric_simple.yml": {
+        "description": "Applies baseline security hardening to fabric devices: login banner, NTP, SSH config, idle timeout.",
+        "intent_keywords": ["harden", "hardening", "security", "baseline", "banner", "ntp", "ssh", "secure"],
+        "hosts": "fabric",
+        "produces": "reports/hardening/*_hardening.txt",
+        "order_hint": 4,
+    },
+    "generate_fabric_compliance_report.yml": {
+        "description": "Generates an HTML compliance dashboard at reports/fabric_compliance/index.html. Requires prior interface, unused ports, VLAN, and hardening data.",
+        "intent_keywords": ["compliance report", "fabric report", "html report", "dashboard", "audit report", "generate report"],
+        "hosts": "fabric + routers",
+        "produces": "reports/fabric_compliance/index.html",
+        "order_hint": 5,
+    },
+    "show_topology_status.yml": {
+        "description": "Checks containerlab topology node status: version, uptime, LLDP neighbors, and interface status for all fabric devices.",
+        "intent_keywords": ["topology", "topology status", "node status", "containerlab", "lab status", "clos topology", "are nodes up"],
+        "hosts": "fabric + routers",
+        "produces": "reports/*_topology_status.txt",
+        "order_hint": 6,
+    },
+    "fabric_audit_all.yml": {
+        "description": "LEGACY ORCHESTRATOR — do not select. Use individual playbooks instead.",
+        "intent_keywords": [],
+        "hosts": "fabric + routers",
+        "produces": "reports/fabric_compliance/index.html",
+        "order_hint": 99,
+    },
+    "ssl_cert_check_expiry.yml": {
+        "description": "Checks the SSL certificate expiry date and status for snoopy.timlam007.com. Reports days remaining, valid/expired/expiring-soon status.",
+        "intent_keywords": ["ssl expiry", "cert expiry", "certificate status", "check ssl", "ssl status", "is cert expired", "certificate check"],
+        "hosts": "localhost_linux",
+        "produces": "stdout report",
+        "order_hint": 10,
+    },
+    "ssl_cert_deploy_new.yml": {
+        "description": "Renews and deploys a new SSL certificate from HashiCorp Vault for snoopy.timlam007.com. Backs up old cert, requests new one, reloads Nginx.",
+        "intent_keywords": ["renew ssl", "renew certificate", "deploy ssl", "fix ssl", "ssl renewal", "new certificate", "replace cert"],
+        "hosts": "localhost_linux",
+        "produces": "new cert at /etc/nginx/ssl/server.crt",
+        "order_hint": 11,
+    },
+    "ssl_cert_generate_report.yml": {
+        "description": "Generates an HTML report for the SSL certificate at reports/ssl_report/index.html with full cert details, expiry, fingerprints.",
+        "intent_keywords": ["ssl report", "certificate report", "ssl html report", "cert report"],
+        "hosts": "localhost_linux",
+        "produces": "reports/ssl_report/index.html",
+        "order_hint": 12,
+    },
+    "ssl_cert_make_expire.yml": {
+        "description": "Demo trick — replaces the current SSL certificate with an expired one to simulate expiry for demonstration purposes.",
+        "intent_keywords": ["make cert expire", "expire certificate", "simulate expiry", "demo expire", "make ssl expire"],
+        "hosts": "localhost_linux",
+        "produces": "expired cert at /etc/nginx/ssl/server.crt",
+        "order_hint": 13,
+    },
+    "ssl_cert_show_details.yml": {
+        "description": "Shows full SSL certificate details: subject, issuer, serial, fingerprints, key algorithm, validity period.",
+        "intent_keywords": ["ssl details", "cert details", "show ssl", "certificate info", "ssl info"],
+        "hosts": "localhost_linux",
+        "produces": "stdout report",
+        "order_hint": 14,
+    },
+}
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -454,6 +544,22 @@ class AnsibleMcpServer:
         info["modules"] = sorted(modules)
         info["inputs"] = sorted(inputs)
         info["summary"] = name or pb_path.name
+
+        # Overlay curated PLAYBOOK_CATALOG metadata (takes precedence over auto-extracted)
+        catalog_entry = PLAYBOOK_CATALOG.get(pb_path.name)
+        if catalog_entry:
+            info["description"] = catalog_entry.get("description", info["summary"])
+            info["intent_keywords"] = catalog_entry.get("intent_keywords", [])
+            info["produces"] = catalog_entry.get("produces", "")
+            info["order_hint"] = catalog_entry.get("order_hint", 99)
+            # Merge intent_keywords into keywords so the plan model sees them
+            info["keywords"] = sorted(set(info["keywords"]) | set(catalog_entry.get("intent_keywords", [])))
+        else:
+            info["description"] = info["summary"]
+            info["intent_keywords"] = []
+            info["produces"] = ""
+            info["order_hint"] = 99
+
         return info
 
     def tool_list_inventory(self) -> Dict[str, Any]:
