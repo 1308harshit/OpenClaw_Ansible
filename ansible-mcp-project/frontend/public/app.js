@@ -106,11 +106,13 @@ go.addEventListener("click", async () => {
           renderProgress();
 
         } else if (msg.type === "orchestration_plan") {
-          // Show the AI plan before execution starts
+          // Show the AI plan before execution starts — deduplicate if called multiple times
           if (progressLines[progressLines.length - 1] === "🤖 Thinking...") progressLines.pop();
+          // Remove any previous plan block to avoid duplicates
+          const prevPlanIdx = progressLines.findIndex(l => l.startsWith("⚙️  🧠 Intelligent orchestration"));
+          if (prevPlanIdx >= 0) progressLines.splice(prevPlanIdx);
+          progressLines.push("⚙️  🧠 Intelligent orchestration — planning playbook combination");
           progressLines.push("─".repeat(60));
-          progressLines.push(`🤖 ${msg.greeting}`);
-          progressLines.push("");
           (msg.playbooks || []).forEach((pb, i) => {
             progressLines.push(`   ${i + 1}. 📋 ${pb}`);
           });

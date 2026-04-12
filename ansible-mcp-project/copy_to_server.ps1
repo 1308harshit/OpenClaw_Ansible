@@ -7,6 +7,12 @@ $localBase = "C:\Pratik\Freelancing\Harshit_ansible\ansible-mcp-project"
 Write-Host "Copying mcp_server.py ..."
 scp -i $key -o StrictHostKeyChecking=no "$localBase\mcp_server.py" "${remote}:${remotePath}/mcp_server.py"
 
+Write-Host "Copying frontend/server.js ..."
+scp -i $key -o StrictHostKeyChecking=no "$localBase\frontend\server.js" "${remote}:${remotePath}/frontend/server.js"
+
+Write-Host "Copying frontend/public/app.js ..."
+scp -i $key -o StrictHostKeyChecking=no "$localBase\frontend\public\app.js" "${remote}:${remotePath}/frontend/public/app.js"
+
 Write-Host "Copying .env ..."
 scp -i $key -o StrictHostKeyChecking=no "$localBase\.env" "${remote}:${remotePath}/.env"
 

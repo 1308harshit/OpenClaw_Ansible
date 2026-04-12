@@ -64,6 +64,13 @@ PLAYBOOK_CATALOG: Dict[str, Dict[str, Any]] = {
         "produces": "reports/hardening/*_hardening.txt",
         "order_hint": 4,
     },
+    "unharden_fabric_simple.yml": {
+        "description": "Removes baseline hardening from fabric devices: removes login banner and NTP server config. Use to reverse harden_fabric_simple.yml and show the before/after difference.",
+        "intent_keywords": ["unharden", "remove hardening", "reverse hardening", "undo hardening", "remove baseline", "undo baseline"],
+        "hosts": "fabric",
+        "produces": "reports/unhardening/*_unhardening.txt",
+        "order_hint": 4,
+    },
     "generate_fabric_compliance_report.yml": {
         "description": "Generates an HTML compliance dashboard at reports/fabric_compliance/index.html. Requires prior interface, unused ports, VLAN, and hardening data.",
         "intent_keywords": ["compliance report", "fabric report", "html report", "dashboard", "audit report", "generate report"],

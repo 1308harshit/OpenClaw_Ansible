@@ -286,14 +286,19 @@ Rules:
 
 Workflow:
 0. If the user asks to \"list tools\", call list_tools and present a short (1-2 lines) description per tool.
-1. CRITICAL: If the user mentions a playbook by partial/descriptive name (e.g. \"harden\", \"vlan\", \"interface\", \"compliance\"), you MUST call list_playbooks_with_summary FIRST to find the exact filename. Do NOT guess playbook names like \"harden.yml\" - use the actual filename from the list (e.g. \"harden_fabric_simple.yml\").
-2. Use get_playbook_info if you need more details
-3. Optionally read_playbook_file
-4. Use run_playbook_check for check/dry-run, otherwise run_playbook
+1. CRITICAL: For fabric audit, harden, unharden, SSL, topology, or any multi-playbook request → ALWAYS use intelligent_playbook_orchestration directly. Do NOT call list_playbooks_with_summary first for these.
+2. For simple single-playbook requests where the exact filename is unknown → call list_playbooks_with_summary FIRST to find the exact filename, then run_playbook.
+3. Use get_playbook_info if you need more details about a specific playbook.
+4. Use run_playbook_check for check/dry-run, otherwise run_playbook.
 
 SSL Demo Environment Playbooks (CRITICAL MAPPINGS):
 - When user says: \"set up SSL demo\", \"setup SSL demo\", \"install SSL demo\", \"setup demo environment\", \"set up demo environment\", \"setup complete SSL demo\", \"one-click setup\", or similar phrases about SETTING UP the SSL demo → ALWAYS run: demo_setup_all.yml (NOT individual playbooks like vault_install_configure.yml or nginx_install_configure.yml)
 - When user says: \"clean SSL demo\", \"cleanup SSL demo\", \"clean demo environment\", \"cleanup demo environment\", \"remove SSL demo\", \"reset SSL demo\", \"clean up everything\", or similar phrases about CLEANING/REMOVING the SSL demo → ALWAYS run: demo_cleanup_all.yml (NOT individual uninstall playbooks)
+- VAULT LINK RULE: The playbook output may show Vault address as http://127.0.0.1:8200 or any private IP — this is the internal address. When presenting results to the user, ALWAYS replace 127.0.0.1, localhost, and any private IP (172.x.x.x, 10.x.x.x, 192.168.x.x) with the public IP 34.197.12.47. So:
+  - Vault UI: http://34.197.12.47:8200 (NOT http://127.0.0.1:8200)
+  - Direct Frontend: http://34.197.12.47:8000 (NOT http://172.x.x.x:8000 or localhost:8000)
+  - Node Frontend status: show as "Reachable at http://34.197.12.47:8000" (NOT localhost:8000)
+  - NEVER show 127.0.0.1, localhost, or any 172.x / 10.x / 192.168.x address to the user.
 - CRITICAL RULE FOR NGINX + HTTPS HEALTH: When user says ANY phrase containing BOTH \"nginx\" AND (\"status\" OR \"health\" OR \"https\"), you MUST do BOTH:
   1) Check Nginx service: Use check_service_status with service_name=\"nginx\" to get service status
   2) Check HTTPS health: Use check_https_endpoint tool with url=\"https://snoopy.timlam007.com/health\" to verify HTTPS endpoint is responding
@@ -322,6 +327,11 @@ Reports:
   2) Tell the user the report path(s) under reports/
   3) Use read_report_file on the most relevant .txt and provide a short summary of its contents
 
+Show Users Reports (CRITICAL):
+- When user asks "show users on all devices" or similar → run show_users_all.yml, then call list_reports with prefix "users/" to find the files, then read_report_file with path "users/users_summary.txt" and present the table.
+- When user asks "show users on leaf2" or a specific device → run show_users_all.yml with limit="leaf2", then read_report_file with path "users/leaf2_users.txt".
+- The report path for read_report_file is ALWAYS relative to reports/ — so use "users/users_summary.txt" NOT "reports/users/users_summary.txt".
+
 Backups:
 - Some playbooks create backup files under backups/.
 - For backups (.txt): do NOT provide browser links. Use list_backups to find files, then read_backup_file to summarize.
@@ -338,6 +348,10 @@ SSL Certificate Workflows:
 - When user says "renew ssl", "renew certificate", "ssl expired", "fix ssl", "renew the ssl certificate for snoopy", or similar → ALWAYS call: intelligent_playbook_orchestration. It will run: ssl_cert_check_expiry.yml → ssl_cert_deploy_new.yml → ssl_cert_generate_report.yml in sequence.
 - When user says "make cert expire", "make certificate expire", "simulate expiry", "demo expire" → call: intelligent_playbook_orchestration. It will run: ssl_cert_make_expire.yml → ssl_cert_check_expiry.yml.
 - After SSL renewal completes, provide the SSL report link: https://snoopy.timlam007.com/reports/ssl_report/index.html
+
+Vault Status (CRITICAL):
+- When user asks about "vault status", "hashicorp vault status", "check vault", "is vault running" → ALWAYS run vault_status_check.yml playbook. Do NOT use check_service_status for Vault — Vault is installed as a binary (not rpm package) so check_service_status will incorrectly say "not installed".
+- vault_status_check.yml checks the actual binary at /usr/local/bin/vault, queries the Vault API, and returns sealed/initialized state, PKI details, and certificate info.
 - This playbook collects version, uptime, LLDP neighbors, and interface status from all fabric devices (leaf1-4, spine1-2, R1)
 - After completion, summarize which nodes are up, their uptime, and active LLDP links
 
@@ -353,12 +367,35 @@ Intelligent Orchestration — Fabric Audit Queries:
 - IMPORTANT: Even if the hardening step fails (common in containerlab), the report is still generated. Mention "Hardening step had errors (expected in demo environment) but report generated successfully."
 - Also call summarize_unused_ports_reports() after the audit to report which device has the most unused ports.
 
+Harden / Unharden Fabric:
+- When user says "harden the network", "harden fabric", "harden the fabric", "apply hardening", "baseline hardening" → ALWAYS call intelligent_playbook_orchestration with user_request set to the exact message. Do NOT call list_playbooks_with_summary first.
+- When user says "unharden", "remove hardening", "reverse hardening", "undo hardening" → ALWAYS call intelligent_playbook_orchestration. Do NOT call list_playbooks_with_summary first.
+- After harden completes:
+  1) Call list_reports with prefix "hardening/" to find the per-device audit files
+  2) Call read_report_file for each device's hardening file (e.g. "hardening/leaf1_hardening.txt")
+  3) Present results as a markdown table: | Device | SSH Config | NTP Config | Banner Config | Status |
+  4) Also provide the compliance report link: BASE_URL/reports/fabric_compliance/index.html
+- After unharden completes:
+  1) Call list_reports with prefix "unhardening/" to find the per-device audit files
+  2) Call read_report_file for each device's unhardening file (e.g. "unhardening/leaf1_unhardening.txt")
+  3) Present results as a markdown table: | Device | SSH Config | NTP Config | Banner Config | Status |
+  4) Note: compliance report link is not relevant for unharden — just show the table
+
 Network Compliance Report (CRITICAL DISTINCTION):
 - When user EXPLICITLY says: "network compliance report", "create network report", "network report" (must contain word "network") → run: generate_network_compliance_report.yml (NOT fabric_audit_all.yml)
 - This playbook ONLY collects device info (vendor, hostname, IP, serial, version) and generates a simple HTML report
 - After completion, provide link: BASE_URL/reports/compliance/index.html
 - This is DIFFERENT from fabric_audit_all.yml which does a full audit (interfaces, VLANs, hardening, etc.)
 - DEFAULT: If user just says "compliance report" without "network", use fabric_audit_all.yml
+
+Identity & model questions:
+- When the user asks "which model are you using", "what model is this", "are you flash or pro", "which gemini model", or similar → always answer directly: "I am using **${GEMINI_MODEL}** (provider: ${MODEL_PROVIDER})." Do not deflect or say you are a large language model — just state the model name from config.
+
+Output formatting (CRITICAL):
+- NEVER include raw tool response JSON in your reply. Tool responses are internal context only — never paste them as text.
+- NEVER output anything like {"read_report_file_response": ...} or {"run_playbook_response": ...} in your answer.
+- Always present data from tool responses in clean human-readable format (tables, bullet points, prose).
+- If you have nothing meaningful to add beyond the tool result, just present the formatted summary.
 
 Answer completeness:
 - If the user asks multiple things (e.g. run playbooks + \"which leaf has the most unused ports\"), you MUST answer all parts.
@@ -409,14 +446,61 @@ Link rules:
 
 // Rule Boost Layer: pre-validated playbook sets for known critical query patterns.
 // Checked BEFORE calling Gemini — guarantees correctness for high-stakes flows.
+// ORDER MATTERS: more specific rules must come before broader ones.
 const RULE_BOOST_MAP = [
   {
+    // check_vlan_consistency — user must say "consistency"
+    keywords: ["consistency", "check vlan", "vlan check"],
+    playbooks: ["check_vlan_consistency.yml"],
+    stop_on_failure: true
+  },
+  {
+    // verify_vlans — user must say both "verify" AND "vlan" (any order, any words between)
+    // matchAll: true means ALL words in the array must appear in the query
+    matchAll: ["verify", "vlan"],
+    playbooks: ["verify_vlans.yml"],
+    stop_on_failure: true
+  },
+  {
+    // Unharden — must be BEFORE harden so "unharden" doesn't match "harden"
+    keywords: [
+      "unharden", "un-harden", "remove hardening", "reverse hardening",
+      "undo hardening", "remove baseline", "undo baseline", "unharden the network",
+      "unharden fabric", "remove harden", "revert hardening"
+    ],
+    playbooks: ["unharden_fabric_simple.yml"],
+    stop_on_failure: false
+  },
+  {
+    // Harden only (standalone)
+    keywords: [
+      "harden the network", "harden network", "harden fabric",
+      "harden the fabric", "apply hardening", "apply baseline hardening",
+      "baseline hardening", "harden only", "just harden"
+    ],
+    playbooks: ["harden_fabric_simple.yml"],
+    stop_on_failure: false
+  },
+  {
+    // Show interfaces only
+    keywords: ["show interfaces", "interface status", "show all interfaces"],
+    playbooks: ["show_interfaces_all.yml"],
+    stop_on_failure: true
+  },
+  {
+    // Unused ports only
+    keywords: ["unused ports", "show unused", "unused port"],
+    playbooks: ["show_unused_ports.yml"],
+    stop_on_failure: true
+  },
+  {
+    // Full fabric audit — broad keywords, comes AFTER specific ones
     keywords: [
       "fabric report", "fabric audit", "audit the network", "audit network",
       "compliance report", "generate report", "operations summary",
       "fabric compliance", "full audit", "generate fabric", "audit fabric",
       "quick operations", "show down interfaces", "list unused ports",
-      "verify vlan", "apply baseline", "apply hardening"
+      "apply baseline", "full fabric"
     ],
     playbooks: [
       "show_interfaces_all.yml",
@@ -425,27 +509,21 @@ const RULE_BOOST_MAP = [
       "harden_fabric_simple.yml",
       "generate_fabric_compliance_report.yml"
     ],
-    stop_on_failure: false  // hardening may fail in cEOS — continue to report anyway
-  },
-  {
-    keywords: ["check vlan", "vlan consistency", "verify vlan", "vlan check"],
-    playbooks: ["check_vlan_consistency.yml"],
-    stop_on_failure: true
-  },
-  {
-    keywords: ["show interfaces", "interface status", "show all interfaces"],
-    playbooks: ["show_interfaces_all.yml"],
-    stop_on_failure: true
-  },
-  {
-    keywords: ["unused ports", "show unused", "unused port"],
-    playbooks: ["show_unused_ports.yml"],
-    stop_on_failure: true
+    stop_on_failure: false
   },
   {
     keywords: ["topology status", "show topology", "containerlab status", "lab status", "node status", "are all nodes"],
     playbooks: ["show_topology_status.yml"],
     stop_on_failure: true
+  },
+  {
+    // Vault status — use playbook not check_service_status (Vault installed as binary not rpm)
+    keywords: [
+      "vault status", "hashicorp vault status", "check vault", "vault health",
+      "is vault running", "vault running", "vault installed"
+    ],
+    playbooks: ["vault_status_check.yml"],
+    stop_on_failure: false
   },
   {
     // SSL certificate renewal — check expiry, deploy new cert from Vault, generate report
@@ -498,8 +576,15 @@ const RULE_BOOST_MAP = [
 function applyRuleBoost(userRequest) {
   const q = userRequest.toLowerCase();
   for (const rule of RULE_BOOST_MAP) {
-    if (rule.keywords.some(kw => q.includes(kw))) {
-      return { forcedPlaybooks: rule.playbooks, stop_on_failure: rule.stop_on_failure };
+    // matchAll: every word in the array must appear somewhere in the query
+    if (rule.matchAll) {
+      if (rule.matchAll.every(word => q.includes(word))) {
+        return { forcedPlaybooks: rule.playbooks, stop_on_failure: rule.stop_on_failure };
+      }
+    } else if (rule.keywords) {
+      if (rule.keywords.some(kw => q.includes(kw))) {
+        return { forcedPlaybooks: rule.playbooks, stop_on_failure: rule.stop_on_failure };
+      }
     }
   }
   return null; // no match — fall through to pure AI
@@ -515,13 +600,13 @@ async function handleIntelligentOrchestration(args, onProgress) {
   const ruleMatch = applyRuleBoost(userRequest);
   let forcedPlaybooks = [];
   let stopOnFailure = true;
-  let greeting = "Hello! Here is the execution plan:";
+  let greeting = "Here is the execution plan:";
   let reasoning = "";
 
   if (ruleMatch) {
     forcedPlaybooks = ruleMatch.forcedPlaybooks;
     stopOnFailure = ruleMatch.stop_on_failure;
-    greeting = "Hello! Based on your request, I've identified the following playbooks to run:";
+    greeting = "Identified the following playbooks to run:";
     reasoning = "Selected based on known workflow for this type of request.";
   }
 
@@ -537,11 +622,11 @@ async function handleIntelligentOrchestration(args, onProgress) {
 
   // Format catalog for plan model — exclude fabric_audit_all.yml (legacy orchestrator)
   const playbookLines = (catalog.playbooks || [])
-    .filter(pb => pb.name !== "fabric_audit_all.yml")
+    .filter(pb => pb.filename !== "fabric_audit_all.yml")
     .map(pb => {
-      const desc = pb.description || pb.summary || pb.name;
+      const desc = pb.description || pb.summary || pb.filename;
       const kws = [...new Set([...(pb.intent_keywords || []), ...(pb.keywords || [])])].slice(0, 10);
-      return `- ${pb.name}: ${desc} | hosts=${pb.hosts || "?"} | keywords=[${kws.join(", ")}]`;
+      return `- ${pb.filename}: ${desc} | hosts=${pb.hosts || "?"} | keywords=[${kws.join(", ")}]`;
     }).join("\n");
 
   // ── Step 3: AI Planning (only when no rule match) ──
@@ -569,7 +654,7 @@ User request: "${userRequest}"
 
 Respond ONLY with valid JSON:
 {
-  "greeting": "Hello! To achieve your goal, I will run the following playbooks:",
+  "greeting": "Planning playbook execution:",
   "playbooks": ["playbook1.yml", "playbook2.yml"],
   "reasoning": "One sentence explaining why these were chosen",
   "stop_on_failure": true
@@ -599,7 +684,7 @@ Respond ONLY with valid JSON:
 
     // Server-side safety filter — never allow fabric_audit_all.yml through
     // Also strip any hallucinated names not in the actual catalog
-    const validNames = new Set((catalog.playbooks || []).map(pb => pb.name));
+    const validNames = new Set((catalog.playbooks || []).map(pb => pb.filename));
     aiPlaybooks = (plan.playbooks || []).filter(pb => pb !== "fabric_audit_all.yml" && validNames.has(pb));
     stopOnFailure = plan.stop_on_failure !== undefined ? plan.stop_on_failure : true;
     greeting = plan.greeting || greeting;
