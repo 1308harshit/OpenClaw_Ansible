@@ -1105,6 +1105,13 @@ Rules:
         else:
             pkg_res = _run(["rpm", "-q", actual_service], cwd=self.project_root)
             installed = pkg_res["returncode"] == 0
+
+        # Fallback: if rpm check failed, try `which <binary>` — covers binaries installed
+        # outside rpm (e.g. HashiCorp Vault installed via official repo or binary download)
+        if not installed:
+            which_res = _run(["which", actual_service], cwd=self.project_root)
+            if which_res["returncode"] == 0 and which_res["stdout"].strip():
+                installed = True
         
         # Check service status
         service_res = _run(["systemctl", "is-active", actual_service], cwd=self.project_root)
@@ -1120,6 +1127,11 @@ Rules:
             version_res = _run(["postgres", "--version"], cwd=self.project_root)
             if version_res["returncode"] == 0:
                 version = version_res["stdout"].strip()
+        elif installed:
+            # Generic version check — try `<service> --version` or `<service> version`
+            ver_res = _run([actual_service, "--version"], cwd=self.project_root)
+            if ver_res["returncode"] == 0 and ver_res["stdout"].strip():
+                version = ver_res["stdout"].strip().splitlines()[0]
         
         status = {
             "service": actual_service,
