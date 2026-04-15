@@ -6,6 +6,11 @@ async function loadConfig() {
     const config = await res.json();
     document.getElementById("gemini-provider").textContent = config.provider || "GEMINI";
     document.getElementById("gemini-model").textContent = config.model || "Unknown";
+    
+    // Display initial user count
+    if (config.activeUsers !== undefined) {
+      document.getElementById("active-users").textContent = config.activeUsers;
+    }
   } catch (e) {
     document.getElementById("gemini-provider").textContent = "GEMINI";
     document.getElementById("gemini-model").textContent = "Error loading";
@@ -373,6 +378,10 @@ go.addEventListener("click", async () => {
             `Task ${statusIcon}: ${msg.task} (${msg.host})${changeInfo}`,
             { task: msg.task, host: msg.host, status: msg.status, changed: msg.changed, playbook: msg.playbook }
           );
+
+        } else if (msg.type === "user_count_update") {
+          // Update active user count
+          document.getElementById("active-users").textContent = msg.count;
 
         } else if (msg.type === "result") {
           stopTimer();

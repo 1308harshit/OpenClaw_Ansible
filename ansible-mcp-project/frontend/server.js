@@ -15,6 +15,9 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const MODEL_PROVIDER = process.env.MODEL_PROVIDER || "GEMINI";
 const MONGODB_URI = process.env.MONGODB_URI;
 
+// Track active SSE connections for user count
+const activeConnections = new Set();
+
 if (!GEMINI_API_KEY) {
   console.error("GEMINI_API_KEY is required in frontend/.env");
   process.exit(2);
@@ -1168,6 +1171,16 @@ app.get("/query-stream", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  // Track this connection
+  activeConnections.add(res);
+  broadcastUserCount();
+
+  // Remove on disconnect
+  req.on('close', () => {
+    activeConnections.delete(res);
+    broadcastUserCount();
+  });
+
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
   try {
@@ -1194,9 +1207,24 @@ app.get("/api/config", (req, res) => {
   res.json({
     provider: MODEL_PROVIDER,
     model: GEMINI_MODEL,
-    port: PORT
+    port: PORT,
+    activeUsers: activeConnections.size
   });
 });
+
+// Broadcast user count to all connected clients
+function broadcastUserCount() {
+  const count = activeConnections.size;
+  const message = `data: ${JSON.stringify({ type: 'user_count_update', count })}\n\n`;
+  
+  activeConnections.forEach(client => {
+    try {
+      client.write(message);
+    } catch (e) {
+      // Connection might be closed, will be cleaned up on 'close' event
+    }
+  });
+}
 
 // API endpoint to get query history
 app.get("/api/history", async (req, res) => {
