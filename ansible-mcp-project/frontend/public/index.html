@@ -15,21 +15,38 @@
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       margin: 0;
-      padding: 40px 20px;
+      padding: 0;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .app-wrapper {
       display: flex;
-      align-items: center;
-      justify-content: center;
+      min-height: 100vh;
+      padding: 40px 20px;
+      gap: 20px;
+      transition: padding-right 0.3s ease;
+    }
+
+    .app-wrapper.debug-open {
+      padding-right: 0;
     }
 
     .container {
-      width: 100%;
+      flex: 1;
       max-width: 900px;
+      margin: 0 auto;
       background: #fff;
       border-radius: 16px;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
       padding: 32px 36px;
+      transition: max-width 0.3s ease;
+    }
+
+    .app-wrapper.debug-open .container {
+      max-width: 100%;
+      margin-right: 0;
     }
 
     /* ══════════════════════════════════════════════════════
@@ -158,6 +175,21 @@
     .btn-debug {
       background: #2d3748;
       color: #fff;
+      position: relative;
+    }
+
+    .btn-debug .badge {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      background: #dc3545;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 10px;
+      min-width: 18px;
+      text-align: center;
     }
 
     .datetime-display {
@@ -209,13 +241,199 @@
     }
 
     /* ══════════════════════════════════════════════════════
+       DEBUG PANEL STYLES
+    ══════════════════════════════════════════════════════ */
+    .debug-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 500px;
+      height: 100vh;
+      background: #0d1117;
+      box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .debug-panel.open {
+      transform: translateX(0);
+    }
+
+    .debug-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .debug-header h3 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #58a6ff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .debug-close {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .debug-close:hover {
+      background: #21262d;
+      color: #c9d1d9;
+    }
+
+    .debug-controls {
+      display: flex;
+      gap: 8px;
+      padding: 12px 20px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-wrap: wrap;
+    }
+
+    .debug-filter {
+      flex: 1;
+      min-width: 120px;
+      padding: 6px 10px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .debug-search {
+      flex: 2;
+      min-width: 150px;
+      padding: 6px 10px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-size: 13px;
+    }
+
+    .debug-search:focus {
+      outline: none;
+      border-color: #58a6ff;
+    }
+
+    .debug-btn-small {
+      padding: 6px 12px;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .debug-btn-small:hover {
+      background: #30363d;
+    }
+
+    .debug-logs {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 20px;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .debug-entry {
+      margin-bottom: 8px;
+      padding: 8px 12px;
+      background: #161b22;
+      border-left: 3px solid #30363d;
+      border-radius: 4px;
+      word-wrap: break-word;
+    }
+
+    .debug-entry.system { border-left-color: #58a6ff; }
+    .debug-entry.tool { border-left-color: #3fb950; }
+    .debug-entry.ai { border-left-color: #d29922; }
+    .debug-entry.error { border-left-color: #f85149; }
+    .debug-entry.timing { border-left-color: #bc8cff; }
+
+    .debug-timestamp {
+      color: #8b949e;
+      font-size: 11px;
+      margin-right: 8px;
+    }
+
+    .debug-type {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      margin-right: 8px;
+      text-transform: uppercase;
+    }
+
+    .debug-type.system { background: #1f6feb; color: #fff; }
+    .debug-type.tool { background: #238636; color: #fff; }
+    .debug-type.ai { background: #9e6a03; color: #fff; }
+    .debug-type.error { background: #da3633; color: #fff; }
+    .debug-type.timing { background: #8957e5; color: #fff; }
+
+    .debug-message {
+      color: #c9d1d9;
+      white-space: pre-wrap;
+    }
+
+    .debug-stats {
+      padding: 8px 20px;
+      background: #161b22;
+      border-top: 1px solid #30363d;
+      display: flex;
+      gap: 16px;
+      font-size: 11px;
+      color: #8b949e;
+    }
+
+    .debug-stat {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .debug-stat-value {
+      color: #58a6ff;
+      font-weight: 600;
+    }
+
+    /* ══════════════════════════════════════════════════════
        TABLET  769px – 1024px
        Side-by-side preserved, just scaled down
     ══════════════════════════════════════════════════════ */
     @media (max-width: 1024px) {
-      body {
+      .app-wrapper {
         padding: 24px 16px;
-        align-items: flex-start;
       }
 
       .container {
@@ -237,6 +455,10 @@
       .datetime-display .time {
         font-size: 16px;
       }
+
+      .debug-panel {
+        width: 400px;
+      }
     }
 
     /* ══════════════════════════════════════════════════════
@@ -253,14 +475,26 @@
        without any order tricks or duplicate DOM nodes.
     ══════════════════════════════════════════════════════ */
     @media (max-width: 768px) {
-      body {
+      .app-wrapper {
         padding: 14px 12px;
-        align-items: flex-start;
       }
 
       .container {
         padding: 20px 16px;
         border-radius: 12px;
+      }
+
+      .debug-panel {
+        width: 100%;
+      }
+
+      .debug-controls {
+        flex-direction: column;
+      }
+
+      .debug-filter,
+      .debug-search {
+        width: 100%;
       }
 
       /* Switch outer layout to grid */
@@ -373,7 +607,7 @@
        Buttons switch to 2-col grid
     ══════════════════════════════════════════════════════ */
     @media (max-width: 480px) {
-      body {
+      .app-wrapper {
         padding: 12px 10px;
       }
 
@@ -395,12 +629,35 @@
       pre#out {
         padding: 14px;
       }
+
+      .debug-panel {
+        width: 100%;
+      }
+    }
+
+    /* Scrollbar styling for debug panel */
+    .debug-logs::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .debug-logs::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+
+    .debug-logs::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 4px;
+    }
+
+    .debug-logs::-webkit-scrollbar-thumb:hover {
+      background: #484f58;
     }
   </style>
 </head>
 
 <body>
-  <div class="container">
+  <div class="app-wrapper">
+    <div class="container">
 
     <!--
       .layout:
@@ -425,7 +682,10 @@
           <button id="go" class="btn btn-send" aria-label="Send query">Send</button>
           <button id="clear-btn" class="btn btn-clear" aria-label="Clear input">Clear</button>
           <button id="history-btn" class="btn btn-history" aria-label="View history">View History</button>
-          <button id="debug-btn" class="btn btn-debug" aria-label="Toggle debug panel">🔍 Debug</button>
+          <button id="debug-btn" class="btn btn-debug" aria-label="Toggle debug panel">
+            🔍 Debug
+            <span class="badge" id="debug-badge" style="display: none;">0</span>
+          </button>
         </div>
       </div>
 
@@ -443,20 +703,59 @@
     <div class="result-label">Result</div>
     <pre id="out" aria-live="polite" aria-label="Query result">(waiting)</pre>
 
-    <!-- Debug panel — hidden by default, toggled by debug button -->
-    <div id="debug-panel" style="display:none; margin-top:16px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-        <span style="font-size:14px; font-weight:600; color:#555;">🔍 Debug Log</span>
-        <button onclick="document.getElementById('debug-out').textContent=''"
-          style="font-size:12px; padding:2px 8px; border:1px solid #ccc; border-radius:4px; cursor:pointer; background:#f5f5f5;">Clear</button>
-      </div>
-      <pre id="debug-out"
-        style="margin:0; background:#0d1117; color:#58a6ff; padding:14px 16px; border-radius:8px; font-size:12px; line-height:1.6; min-height:60px; max-height:220px; overflow-y:auto; white-space:pre-wrap; word-wrap:break-word;"></pre>
     </div>
-
   </div>
 
-  <script src="app.js?v=2.0"></script>
+  <!-- Enhanced Debug Panel (slides in from right) -->
+  <aside class="debug-panel" id="debug-panel">
+    <div class="debug-header">
+      <h3>🔍 Debug Console</h3>
+      <button class="debug-close" id="debug-close" aria-label="Close debug panel">×</button>
+    </div>
+    
+    <div class="debug-controls">
+      <select class="debug-filter" id="debug-filter" aria-label="Filter debug logs">
+        <option value="all">All Events</option>
+        <option value="system">System</option>
+        <option value="tool">Tools</option>
+        <option value="ai">AI</option>
+        <option value="error">Errors</option>
+        <option value="timing">Timing</option>
+      </select>
+      
+      <input type="text" class="debug-search" id="debug-search" placeholder="Search logs..." aria-label="Search debug logs">
+      
+      <button class="debug-btn-small" id="debug-clear">Clear</button>
+      <button class="debug-btn-small" id="debug-export">Export</button>
+    </div>
+    
+    <div class="debug-logs" id="debug-logs">
+      <div style="color: #8b949e; text-align: center; padding: 40px 20px;">
+        No debug events yet. Send a query to see logs.
+      </div>
+    </div>
+    
+    <div class="debug-stats">
+      <div class="debug-stat">
+        <span>Total:</span>
+        <span class="debug-stat-value" id="debug-total">0</span>
+      </div>
+      <div class="debug-stat">
+        <span>Tools:</span>
+        <span class="debug-stat-value" id="debug-tools">0</span>
+      </div>
+      <div class="debug-stat">
+        <span>Errors:</span>
+        <span class="debug-stat-value" id="debug-errors">0</span>
+      </div>
+      <div class="debug-stat">
+        <span>Duration:</span>
+        <span class="debug-stat-value" id="debug-duration">0s</span>
+      </div>
+    </div>
+  </aside>
+
+  <script src="app.js?v=3.0"></script>
 </body>
 
 </html>
