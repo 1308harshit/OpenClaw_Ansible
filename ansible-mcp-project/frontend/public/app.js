@@ -55,6 +55,23 @@ const DIVIDER = "━".repeat(80);
 const q = document.getElementById("q");
 const out = document.getElementById("out");
 const go = document.getElementById("go");
+const debugBtn = document.getElementById("debug-btn");
+const debugPanel = document.getElementById("debug-panel");
+const debugOut = document.getElementById("debug-out");
+
+// ── Debug panel toggle ────────────────────────────────────────────────────────
+let debugVisible = false;
+debugBtn.addEventListener("click", () => {
+  debugVisible = !debugVisible;
+  debugPanel.style.display = debugVisible ? "block" : "none";
+  debugBtn.textContent = debugVisible ? "🔍 Hide Debug" : "🔍 Debug";
+});
+
+function appendDebug(text) {
+  const ts = new Date().toISOString().substring(11, 23);
+  debugOut.textContent += `[${ts}] ${text}\n`;
+  debugOut.scrollTop = debugOut.scrollHeight;
+}
 
 go.addEventListener("click", async () => {
   const text = (q.value || "").trim();
@@ -66,8 +83,39 @@ go.addEventListener("click", async () => {
   out.textContent = header + "⏳ Connecting...";
   go.disabled = true;
 
+  // Clear debug panel for new query
+  debugOut.textContent = `=== Query: "${text}" ===\n`;
+
   // Progress lines shown while streaming
   const progressLines = [];
+
+  // ── Elapsed timer ─────────────────────────────────────────────────────────
+  // Tracks which line index is "active" (currently running) and ticks a counter
+  let activeLineIdx = -1;
+  let activeLineBase = "";
+  let elapsedSeconds = 0;
+  let timerInterval = null;
+
+  function startTimer(lineIdx, baseText) {
+    stopTimer();
+    activeLineIdx = lineIdx;
+    activeLineBase = baseText;
+    elapsedSeconds = 0;
+    timerInterval = setInterval(() => {
+      elapsedSeconds++;
+      if (activeLineIdx >= 0 && activeLineIdx < progressLines.length) {
+        progressLines[activeLineIdx] = `${activeLineBase}  ⏱ ${elapsedSeconds}s`;
+        renderProgress();
+      }
+    }, 1000);
+  }
+
+  function stopTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    activeLineIdx = -1;
+    activeLineBase = "";
+    elapsedSeconds = 0;
+  }
 
   function renderProgress() {
     out.textContent = header + progressLines.join("\n");
@@ -86,23 +134,35 @@ go.addEventListener("click", async () => {
 
         if (msg.type === "start") {
           progressLines.push("🤖 Thinking...");
+          const idx = progressLines.length - 1;
+          startTimer(idx, "🤖 Thinking...");
+          appendDebug("stream started");
           renderProgress();
 
         } else if (msg.type === "tool_start") {
+          stopTimer();
           // Replace last "Thinking..." or add new line
           const last = progressLines[progressLines.length - 1] || "";
-          if (last === "🤖 Thinking...") progressLines.pop();
-          progressLines.push(`⚙️  ${msg.label}`);
+          if (last === "🤖 Thinking..." || last.startsWith("🤖 Thinking...")) progressLines.pop();
+          const label = `⚙️  ${msg.label}`;
+          progressLines.push(label);
+          const idx = progressLines.length - 1;
+          startTimer(idx, label);
+          appendDebug(`tool_start: ${msg.name} — ${msg.label}`);
           renderProgress();
 
         } else if (msg.type === "tool_done") {
+          stopTimer();
           // Mark the last tool line with ok/fail
           const idx = progressLines.length - 1;
           if (idx >= 0) {
             const icon = msg.ok !== false ? "✅" : "❌";
-            progressLines[idx] = progressLines[idx].replace(/^⚙️ /, `${icon} `);
+            progressLines[idx] = progressLines[idx].replace(/^⚙️ /, `${icon} `).replace(/  ⏱ \d+s$/, "");
           }
           progressLines.push("🤖 Processing...");
+          const pidx = progressLines.length - 1;
+          startTimer(pidx, "🤖 Processing...");
+          appendDebug(`tool_done: ${msg.name} ok=${msg.ok}`);
           renderProgress();
 
         } else if (msg.type === "orchestration_plan") {
@@ -122,31 +182,43 @@ go.addEventListener("click", async () => {
           renderProgress();
 
         } else if (msg.type === "playbook_start") {
-          progressLines.push(`🚀 Running playbook: ${msg.playbook}`);
+          stopTimer();
+          const label = `🚀 Running playbook: ${msg.playbook}`;
+          progressLines.push(label);
           progressLines.push("   ⏳ Processing...");
+          const idx = progressLines.length - 2;
+          startTimer(idx, label);
+          appendDebug(`playbook_start: ${msg.playbook}`);
           renderProgress();
 
         } else if (msg.type === "playbook_done") {
+          stopTimer();
           // Replace the last "Processing..." with done status
           const last = progressLines[progressLines.length - 1];
           if (last && last.includes("Processing...")) progressLines.pop();
           const icon = msg.ok !== false ? "✅" : "❌";
           const status = msg.ok !== false ? "Complete" : "Failed";
-          // Update the "Running playbook" line
+          // Update the "Running playbook" line — strip timer suffix
           const pbIdx = progressLines.map(l => l.includes(`Running playbook: ${msg.playbook}`)).lastIndexOf(true);
           if (pbIdx >= 0) progressLines[pbIdx] = `${icon} Running playbook: ${msg.playbook} — ${status}`;
           progressLines.push("");
+          appendDebug(`playbook_done: ${msg.playbook} ok=${msg.ok}`);
           renderProgress();
 
         } else if (msg.type === "result") {
+          stopTimer();
           // Remove trailing "Processing..." line then show final answer
-          if (progressLines[progressLines.length - 1] === "🤖 Processing...") {
+          if (progressLines[progressLines.length - 1] === "🤖 Processing..." ||
+            (progressLines[progressLines.length - 1] || "").startsWith("🤖 Processing...")) {
             progressLines.pop();
           }
+          appendDebug("result received");
           const separator = "\n" + "─".repeat(80) + "\n";
           out.textContent = header + progressLines.join("\n") + separator + msg.text;
 
         } else if (msg.type === "error") {
+          stopTimer();
+          appendDebug(`error: ${msg.message}`);
           out.textContent = header + progressLines.join("\n") + "\n\n❌ Error: " + msg.message;
           es.close();
           resolve();
@@ -160,8 +232,10 @@ go.addEventListener("click", async () => {
     });
 
   } catch (e) {
+    stopTimer();
     out.textContent = header + String(e);
   } finally {
+    stopTimer();
     go.disabled = false;
   }
 });
