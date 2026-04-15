@@ -356,6 +356,24 @@ go.addEventListener("click", async () => {
           addDebugEntry(msg.ok !== false ? 'tool' : 'error', `Playbook completed: ${msg.playbook}`, { ok: msg.ok, playbook: msg.playbook });
           renderProgress();
 
+        } else if (msg.type === "ansible_play_start") {
+          // Ansible play started
+          addDebugEntry('tool', `Play started: ${msg.play}`, { play: msg.play, playbook: msg.playbook });
+
+        } else if (msg.type === "ansible_task_start") {
+          // Ansible task started
+          addDebugEntry('tool', `Task started: ${msg.task} (${msg.host})`, { task: msg.task, host: msg.host, playbook: msg.playbook });
+
+        } else if (msg.type === "ansible_task_done") {
+          // Ansible task completed
+          const statusIcon = msg.status === 'ok' ? '✓' : msg.status === 'failed' ? '✗' : msg.status === 'skipped' ? '⊘' : '?';
+          const changeInfo = msg.changed ? ' [changed]' : '';
+          addDebugEntry(
+            msg.status === 'failed' ? 'error' : 'tool',
+            `Task ${statusIcon}: ${msg.task} (${msg.host})${changeInfo}`,
+            { task: msg.task, host: msg.host, status: msg.status, changed: msg.changed, playbook: msg.playbook }
+          );
+
         } else if (msg.type === "result") {
           stopTimer();
           // Remove trailing "Processing..." line then show final answer

@@ -286,14 +286,17 @@ Rules:
 
 Workflow:
 0. If the user asks to \"list tools\", call list_tools and present a short (1-2 lines) description per tool.
+0b. If the user asks to \"list playbooks\" or \"list playbook\" → call list_playbooks (NOT list_playbooks_with_summary) and present ONLY the playbook names as a simple bulleted list. Do NOT include descriptions or summaries.
 1. CRITICAL: For fabric audit, harden, unharden, SSL, topology, or any multi-playbook request → ALWAYS use intelligent_playbook_orchestration directly. Do NOT call list_playbooks_with_summary first for these.
 2. For simple single-playbook requests where the exact filename is unknown → call list_playbooks_with_summary FIRST to find the exact filename, then run_playbook.
 3. Use get_playbook_info if you need more details about a specific playbook.
 4. Use run_playbook_check for check/dry-run, otherwise run_playbook.
 
 SSL Demo Environment Playbooks (CRITICAL MAPPINGS):
-- When user says: \"set up SSL demo\", \"setup SSL demo\", \"install SSL demo\", \"setup demo environment\", \"set up demo environment\", \"setup complete SSL demo\", \"one-click setup\", or similar phrases about SETTING UP the SSL demo → ALWAYS run: demo_setup_all.yml (NOT individual playbooks like vault_install_configure.yml or nginx_install_configure.yml)
-- When user says: \"clean SSL demo\", \"cleanup SSL demo\", \"clean demo environment\", \"cleanup demo environment\", \"remove SSL demo\", \"reset SSL demo\", \"clean up everything\", or similar phrases about CLEANING/REMOVING the SSL demo → ALWAYS run: demo_cleanup_all.yml (NOT individual uninstall playbooks)
+- When user says: \"set up SSL demo\", \"setup SSL demo\", \"install SSL demo\", \"setup demo environment\", \"set up demo environment\", \"setup complete SSL demo\", \"one-click setup\", or similar phrases about SETTING UP the SSL demo → ALWAYS use intelligent_playbook_orchestration with user_request=\"setup ssl demo\" (this will automatically select demo_setup_all.yml)
+- When user says: \"clean SSL demo\", \"cleanup SSL demo\", \"delete SSL demo\", \"remove SSL demo\", \"clean demo environment\", \"cleanup demo environment\", \"delete demo environment\", \"remove demo environment\", \"reset SSL demo\", \"clean up everything\", \"uninstall SSL demo\", or similar phrases about CLEANING/REMOVING/DELETING the SSL demo → ALWAYS use intelligent_playbook_orchestration with user_request=\"cleanup ssl demo\" (this will automatically select demo_cleanup_all.yml)
+- NEVER call run_playbook directly for demo_setup_all.yml or demo_cleanup_all.yml - ALWAYS use intelligent_playbook_orchestration
+- These are orchestration playbooks that run multiple sub-playbooks in the correct order. DO NOT break them down into individual playbooks.
 - VAULT LINK RULE: The playbook output may show Vault address as http://127.0.0.1:8200 or any private IP — this is the internal address. When presenting results to the user, ALWAYS replace 127.0.0.1, localhost, and any private IP (172.x.x.x, 10.x.x.x, 192.168.x.x) with the public IP 34.197.12.47. So:
   - Vault UI: http://34.197.12.47:8200 (NOT http://127.0.0.1:8200)
   - Direct Frontend: http://34.197.12.47:8000 (NOT http://172.x.x.x:8000 or localhost:8000)
@@ -448,6 +451,29 @@ Link rules:
 // Checked BEFORE calling Gemini — guarantees correctness for high-stakes flows.
 // ORDER MATTERS: more specific rules must come before broader ones.
 const RULE_BOOST_MAP = [
+  {
+    // Demo setup - must come before other rules
+    keywords: [
+      "setup ssl demo", "set up ssl demo", "install ssl demo",
+      "setup demo", "set up demo", "install demo", "demo setup",
+      "setup demo environment", "set up demo environment",
+      "one-click setup", "quick setup"
+    ],
+    playbooks: ["demo_setup_all.yml"],
+    stop_on_failure: true
+  },
+  {
+    // Demo cleanup - must come before other rules
+    keywords: [
+      "cleanup ssl demo", "clean up ssl demo", "delete ssl demo",
+      "remove ssl demo", "uninstall ssl demo", "reset ssl demo",
+      "cleanup demo", "clean up demo", "delete demo", "remove demo",
+      "cleanup demo environment", "clean up demo environment",
+      "delete demo environment", "remove demo environment"
+    ],
+    playbooks: ["demo_cleanup_all.yml"],
+    stop_on_failure: false
+  },
   {
     // check_vlan_consistency — user must say "consistency"
     keywords: ["consistency", "check vlan", "vlan check"],
@@ -711,33 +737,29 @@ Respond ONLY with valid JSON:
     };
   }
 
-  // ── Step 6: Execute each playbook one by one ──
-  const mcpExec = startMcpProcess();
+  // ── Step 6: Execute each playbook one by one with streaming ──
   const results = [];
   let overallOk = true;
 
-  try {
-    for (const pb of finalPlaybooks) {
-      if (onProgress) onProgress({ type: "playbook_start", playbook: pb });
+  for (const pb of finalPlaybooks) {
+    if (onProgress) onProgress({ type: "playbook_start", playbook: pb });
 
-      let res;
-      try {
-        const out = await mcpExec.callTool("run_playbook", { playbook: pb, limit, extra_vars: extraVars });
-        res = out.result;
-      } catch (e) {
-        res = { ok: false, error: String(e.message) };
-      }
-
-      if (onProgress) onProgress({ type: "playbook_done", playbook: pb, ok: res.ok });
-      results.push({ playbook: pb, ok: res.ok, stdout: res.stdout, stderr: res.stderr, error: res.error });
-
-      if (!res.ok) {
-        overallOk = false;
-        if (stopOnFailure) break;
-      }
+    let res;
+    try {
+      // Use streaming version for real-time task updates
+      const out = await runPlaybookWithStreaming("run_playbook", { playbook: pb, limit, extra_vars: extraVars }, onProgress);
+      res = out.result;
+    } catch (e) {
+      res = { ok: false, error: String(e.message) };
     }
-  } finally {
-    mcpExec.close();
+
+    if (onProgress) onProgress({ type: "playbook_done", playbook: pb, ok: res.ok });
+    results.push({ playbook: pb, ok: res.ok, stdout: res.stdout, stderr: res.stderr, error: res.error });
+
+    if (!res.ok) {
+      overallOk = false;
+      if (stopOnFailure) break;
+    }
   }
 
   return {
@@ -749,6 +771,143 @@ Respond ONLY with valid JSON:
       execution_results: results
     }
   };
+}
+
+// Run ansible-playbook with JSON callback for real-time task streaming
+async function runPlaybookWithStreaming(toolName, args, onProgress) {
+  const { playbook, limit, tags, extra_vars } = args;
+  const isCheck = toolName === "run_playbook_check";
+  
+  // Resolve playbook path - check ansible-project FIRST (has more playbooks)
+  const playbookPaths = [
+    path.join(ANSIBLE_PROJECT_ROOT, "playbooks", playbook),
+    path.join(PROJECT_ROOT, "playbooks", playbook),
+    path.join(ANSIBLE_PROJECT_ROOT, playbook),  // Also check root in case it's there
+  ];
+  
+  let playbookPath = null;
+  for (const p of playbookPaths) {
+    if (require("fs").existsSync(p)) {
+      playbookPath = p;
+      break;
+    }
+  }
+  
+  if (!playbookPath) {
+    return {
+      tool: toolName,
+      result: { ok: false, error: `Playbook not found: ${playbook}. Searched: ${playbookPaths.join(", ")}` }
+    };
+  }
+  
+  // Build ansible-playbook command
+  const inventoryPath = path.join(ANSIBLE_PROJECT_ROOT, "inventory", "inventory.yml");
+  const cmd = ["ansible-playbook", "-i", inventoryPath, playbookPath];
+  
+  if (isCheck) {
+    cmd.push("--check", "--diff");
+  }
+  if (limit) {
+    cmd.push("--limit", limit);
+  }
+  if (tags) {
+    cmd.push("--tags", tags);
+  }
+  if (extra_vars) {
+    cmd.push("--extra-vars", JSON.stringify(extra_vars));
+  }
+  
+  // Add verbose flag to see task names
+  cmd.push("-v");
+  
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd[0], cmd.slice(1), {
+      cwd: ANSIBLE_PROJECT_ROOT,
+      env: {
+        ...process.env,
+        ANSIBLE_FORCE_COLOR: "0",  // Disable color codes
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    
+    let stdout = "";
+    let stderr = "";
+    let currentTask = null;
+    let currentPlay = null;
+    
+    // Parse verbose output line by line
+    const rl = readline.createInterface({ input: child.stdout });
+    
+    rl.on("line", (line) => {
+      stdout += line + "\n";
+      
+      // Detect PLAY start: "PLAY [Play Name] ****"
+      const playMatch = line.match(/^PLAY \[(.*?)\]\s*\*+/);
+      if (playMatch) {
+        currentPlay = playMatch[1];
+        if (onProgress) {
+          onProgress({
+            type: "ansible_play_start",
+            play: currentPlay,
+            playbook: playbook
+          });
+        }
+      }
+      
+      // Detect TASK start: "TASK [Task Name] ****"
+      const taskMatch = line.match(/^TASK \[(.*?)\]\s*\*+/);
+      if (taskMatch) {
+        currentTask = taskMatch[1];
+        if (onProgress) {
+          onProgress({
+            type: "ansible_task_start",
+            task: currentTask,
+            host: "all",
+            playbook: playbook
+          });
+        }
+      }
+      
+      // Detect task completion: "ok: [hostname]", "changed: [hostname]", "failed: [hostname]", "skipping: [hostname]"
+      const resultMatch = line.match(/^(ok|changed|failed|skipping|fatal):\s*\[(.*?)\]/);
+      if (resultMatch && currentTask) {
+        const status = resultMatch[1];
+        const host = resultMatch[2];
+        
+        if (onProgress) {
+          onProgress({
+            type: "ansible_task_done",
+            task: currentTask,
+            host: host,
+            status: status,
+            changed: status === "changed",
+            playbook: playbook
+          });
+        }
+      }
+    });
+    
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+    
+    child.on("close", (code) => {
+      resolve({
+        tool: toolName,
+        result: {
+          ok: code === 0,
+          returncode: code,
+          stdout: stdout.slice(-200000),
+          stderr: stderr.slice(-200000),
+          cmd: cmd
+        }
+      });
+    });
+    
+    child.on("error", (err) => {
+      reject(new Error(`Failed to run playbook: ${err.message}`));
+    });
+  });
 }
 
 function startMcpProcess() {
@@ -845,6 +1004,11 @@ function startMcpProcess() {
     // Intelligent orchestration — handled entirely in server.js using the existing Gemini connection
     if (name === "intelligent_playbook_orchestration") {
       return await handleIntelligentOrchestration(args, onProgress);
+    }
+
+    // run_playbook with real-time task streaming
+    if ((name === "run_playbook" || name === "run_playbook_check") && onProgress) {
+      return await runPlaybookWithStreaming(name, args, onProgress);
     }
 
     if (!initialized) {
