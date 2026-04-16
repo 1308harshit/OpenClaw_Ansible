@@ -34,6 +34,36 @@ loadConfig();
 updateHKTTime();
 setInterval(updateHKTTime, 1000);
 
+// Establish persistent SSE connection for user count tracking
+let persistentSSE = null;
+function connectUserTracking() {
+  if (persistentSSE) return; // Already connected
+  
+  // Add timestamp to prevent caching
+  persistentSSE = new EventSource('/user-tracking?t=' + Date.now());
+  
+  persistentSSE.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'user_count_update') {
+        document.getElementById("active-users").textContent = msg.count;
+      }
+    } catch (e) {
+      // Ignore parse errors
+    }
+  };
+  
+  persistentSSE.onerror = () => {
+    persistentSSE.close();
+    persistentSSE = null;
+    // Reconnect after 5 seconds
+    setTimeout(connectUserTracking, 5000);
+  };
+}
+
+// Start tracking on page load
+connectUserTracking();
+
 document.getElementById("clear-btn").addEventListener("click", () => {
   document.getElementById("q").value = "";
   document.getElementById("q").focus();
@@ -77,7 +107,15 @@ let debugStats = { total: 0, tools: 0, errors: 0, startTime: null };
 let autoScroll = true;
 
 function addDebugEntry(type, message, data = null) {
-  const timestamp = new Date().toISOString().substring(11, 23);
+  // Convert to HKT timestamp
+  const now = new Date();
+  const hkt = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Hong_Kong" }));
+  const hh = String(hkt.getHours()).padStart(2, '0');
+  const mm = String(hkt.getMinutes()).padStart(2, '0');
+  const ss = String(hkt.getSeconds()).padStart(2, '0');
+  const ms = String(hkt.getMilliseconds()).padStart(3, '0');
+  const timestamp = `${hh}:${mm}:${ss}.${ms}`;
+  
   const entry = { type, message, data, timestamp, id: Date.now() + Math.random() };
   debugEntries.push(entry);
   
@@ -146,6 +184,14 @@ function updateDebugStats() {
   if (debugStats.startTime) {
     const duration = Math.floor((Date.now() - debugStats.startTime) / 1000);
     document.getElementById('debug-duration').textContent = `${duration}s`;
+  }
+  
+  // Add start and end times
+  if (debugEntries.length > 0) {
+    const startTime = debugEntries[0].timestamp.substring(0, 8); // HH:MM:SS
+    const endTime = debugEntries[debugEntries.length - 1].timestamp.substring(0, 8);
+    document.getElementById('debug-start-time').textContent = `${startTime} (HKT)`;
+    document.getElementById('debug-end-time').textContent = `${endTime} (HKT)`;
   }
 }
 
