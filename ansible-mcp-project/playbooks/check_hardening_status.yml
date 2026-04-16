@@ -1,0 +1,116 @@
+---
+# Check Hardening Status (Read-Only)
+# Checks current hardening configuration WITHOUT making any changes
+# Generates reports showing what IS configured vs what SHOULD BE configured
+#
+# Usage:
+#   ansible-playbook playbooks/check_hardening_status.yml
+#   ansible-playbook playbooks/check_hardening_status.yml --limit leaf1,leaf2
+
+- name: Check Hardening Status (Read-Only)
+  hosts: fabric
+  gather_facts: no
+  
+  vars:
+    reports_dir: "{{ playbook_dir }}/../../ansible-project/reports"
+    hardening_status_dir: "{{ reports_dir }}/hardening_status"
+
+  tasks:
+    - name: Create hardening status report directory
+      ansible.builtin.file:
+        path: "{{ hardening_status_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Check SSH configuration
+      arista.eos.eos_command:
+        commands:
+          - show running-config section ssh
+      register: ssh_config
+      ignore_errors: yes
+
+    - name: Check NTP configuration
+      arista.eos.eos_command:
+        commands:
+          - show running-config section ntp
+      register: ntp_config
+      ignore_errors: yes
+
+    - name: Check banner configuration
+      arista.eos.eos_command:
+        commands:
+          - show banner login
+      register: banner_config
+      ignore_errors: yes
+
+    - name: Analyze SSH hardening status
+      ansible.builtin.set_fact:
+        ssh_hardened: "{{ 'Ciphers aes256-ctr' in (ssh_config.stdout[0] | default('')) }}"
+
+    - name: Analyze NTP status
+      ansible.builtin.set_fact:
+        ntp_configured: "{{ 'ntp server' in (ntp_config.stdout[0] | default('')) }}"
+
+    - name: Analyze banner status
+      ansible.builtin.set_fact:
+        banner_set: "{{ 'Authorized access only' in (banner_config.stdout[0] | default('')) or 'UNAUTHORIZED ACCESS' in (banner_config.stdout[0] | default('')) }}"
+
+    - name: Determine overall status
+      ansible.builtin.set_fact:
+        overall_status: >-
+          {% if ssh_hardened and ntp_configured and banner_set %}Fully Hardened
+          {% elif ssh_hardened or ntp_configured or banner_set %}Partially Hardened
+          {% else %}Not Hardened{% endif %}
+
+    - name: Generate hardening status report
+      ansible.builtin.copy:
+        dest: "{{ hardening_status_dir }}/{{ inventory_hostname }}_status.txt"
+        mode: "0644"
+        content: |
+          ========================================
+          Hardening Status Report: {{ inventory_hostname }}
+          ========================================
+          Generated: {{ ansible_date_time.iso8601 | default('N/A') }}
+          
+          SSH Hardening: {{ 'YES' if ssh_hardened else 'NO' }}
+          {% if ssh_hardened %}
+          - Strong ciphers configured
+          {% else %}
+          - Default SSH configuration (not hardened)
+          {% endif %}
+          
+          NTP Configuration: {{ 'YES' if ntp_configured else 'NO' }}
+          {% if ntp_configured %}
+          - NTP servers configured
+          {% else %}
+          - No NTP servers configured
+          {% endif %}
+          
+          Login Banner: {{ 'YES' if banner_set else 'NO' }}
+          {% if banner_set %}
+          - Security banner is set
+          {% else %}
+          - No security banner configured
+          {% endif %}
+          
+          Overall Status: {{ overall_status }}
+          
+          ========================================
+          Configuration Details
+          ========================================
+          
+          --- SSH Configuration ---
+          {{ ssh_config.stdout[0] | default('No SSH configuration found') }}
+          
+          --- NTP Configuration ---
+          {{ ntp_config.stdout[0] | default('No NTP configuration found') }}
+          
+          --- Banner Configuration ---
+          {{ banner_config.stdout[0] | default('No banner configured') }}
+      delegate_to: localhost
+
+    - name: Display report location
+      ansible.builtin.debug:
+        msg: "Hardening status report saved: {{ hardening_status_dir }}/{{ inventory_hostname }}_status.txt"

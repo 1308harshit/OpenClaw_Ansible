@@ -1,0 +1,27 @@
+---
+# Fabric Compliance Report (Read-Only)
+# Collects current state WITHOUT making any changes:
+#   1. Show topology status
+#   2. Show all interfaces
+#   3. Detect unused ports
+#   4. Check VLAN consistency
+#   5. Generate compliance HTML report
+#
+# Usage:
+#   ansible-playbook playbooks/fabric_compliance_report_readonly.yml
+#   ansible-playbook playbooks/fabric_compliance_report_readonly.yml --limit leafs
+
+- name: "Step 1 — Show topology status"
+  ansible.builtin.import_playbook: show_topology_status.yml
+
+- name: "Step 2 — Show all interfaces"
+  ansible.builtin.import_playbook: show_interfaces_all.yml
+
+- name: "Step 3 — Detect unused ports"
+  ansible.builtin.import_playbook: show_unused_ports.yml
+
+- name: "Step 4 — Check VLAN consistency"
+  ansible.builtin.import_playbook: check_vlan_consistency.yml
+
+- name: "Step 5 — Generate fabric compliance report"
+  ansible.builtin.import_playbook: generate_fabric_compliance_report.yml

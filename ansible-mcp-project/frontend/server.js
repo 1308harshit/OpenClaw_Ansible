@@ -350,10 +350,12 @@ IMPORTANT:
 Topology Status:
 - When user says ANY of: "topology status", "show topology", "containerlab status", "clos topology", "node status", "are all nodes up", "check topology", "lab status" → run: show_topology_status.yml
 
-SSL Certificate Workflows:
+SSL Certificate Workflows (CRITICAL - URL FORMAT):
 - When user says "renew ssl", "renew certificate", "ssl expired", "fix ssl", "renew the ssl certificate for snoopy", or similar → ALWAYS call: intelligent_playbook_orchestration. It will run: ssl_cert_check_expiry.yml → ssl_cert_deploy_new.yml → ssl_cert_generate_report.yml in sequence.
 - When user says "make cert expire", "make certificate expire", "simulate expiry", "demo expire" → call: intelligent_playbook_orchestration. It will run: ssl_cert_make_expire.yml → ssl_cert_check_expiry.yml.
-- After SSL renewal completes, provide the SSL report link: https://snoopy.timlam007.com/reports/ssl_report/index.html
+- When user says "setup ssl env", "ssl demo setup" → run demo_setup_all.yml
+- CRITICAL: SSL report URL MUST include /reports/ prefix: https://snoopy.timlam007.com/reports/ssl_report/index.html
+- After SSL operations complete, ALWAYS provide the SSL report link: https://snoopy.timlam007.com/reports/ssl_report/index.html
 
 Vault Status (CRITICAL):
 - When user asks about "vault status", "hashicorp vault status", "check vault", "is vault running" → ALWAYS run vault_status_check.yml playbook. Do NOT use check_service_status for Vault — Vault is installed as a binary (not rpm package) so check_service_status will incorrectly say "not installed".
@@ -366,21 +368,44 @@ Intelligent Orchestration:
 - This tool will plan the playbooks, show the user the plan, then execute them one by one.
 - Example: "check topology and show unused ports" → use intelligent_playbook_orchestration
 
-Intelligent Orchestration — Fabric Audit Queries:
-- When user says ANY of: "audit the full fabric", "fabric audit", "fabric report", "fabric compliance", "operations summary", "quick operations summary", "show down interfaces", "list unused ports", "verify vlan consistency", "apply baseline hardening", "generate compliance report", "compliance report", "audit the network", "generate fabric report", or any combination of these → ALWAYS call: intelligent_playbook_orchestration with user_request set to the user's exact message. Do NOT call run_playbook(fabric_audit_all.yml) directly.
-- The orchestration tool will intelligently select the correct individual playbooks, show the user a plan, and execute them one by one with live progress.
-- After completion, provide the compliance report link: BASE_URL/reports/fabric_compliance/index.html
-- IMPORTANT: Even if the hardening step fails (common in containerlab), the report is still generated. Mention "Hardening step had errors (expected in demo environment) but report generated successfully."
-- Also call summarize_unused_ports_reports() after the audit to report which device has the most unused ports.
+Intelligent Orchestration — Fabric Compliance Report (READ-ONLY):
+- When user says ANY of: "fabric report", "fabric compliance", "compliance report", "create fabric report", "generate fabric report", "audit the network" (WITHOUT "harden" keyword) → ALWAYS call: intelligent_playbook_orchestration with user_request set to the user's exact message.
+- The orchestration tool will intelligently select READ-ONLY playbooks in this order:
+  1. show_topology_status.yml (check topology first)
+  2. show_interfaces_all.yml (collect interface data)
+  3. show_unused_ports.yml (detect unused ports)
+  4. check_vlan_consistency.yml (verify VLANs)
+  5. generate_fabric_compliance_report.yml (create HTML report)
+- CRITICAL: Do NOT include harden_fabric_simple.yml for compliance reports - it CHANGES config!
+- After completion, provide the compliance report link: Reports Base URL/fabric_compliance/index.html
+- Also call summarize_unused_ports_reports() after completion to report which device has the most unused ports.
 
-Harden / Unharden Fabric:
-- When user says "harden the network", "harden fabric", "harden the fabric", "apply hardening", "baseline hardening" → ALWAYS call intelligent_playbook_orchestration with user_request set to the exact message. Do NOT call list_playbooks_with_summary first.
-- When user says "unharden", "remove hardening", "reverse hardening", "undo hardening" → ALWAYS call intelligent_playbook_orchestration. Do NOT call list_playbooks_with_summary first.
+PLAYBOOK SELECTION RULES (CRITICAL):
+- For "fabric report" / "compliance report" → Use: show_topology_status.yml, show_interfaces_all.yml, show_unused_ports.yml, check_vlan_consistency.yml, generate_fabric_compliance_report.yml (NO HARDENING)
+- For "harden" requests → Use: harden_fabric_simple.yml (ONLY when explicitly requested)
+- For "unharden" requests → Use: unharden_fabric_simple.yml
+- For "show hardening" / "check hardening" / "hardening status" → Use: check_hardening_status.yml (READ-ONLY, no changes)
+- NEVER include harden_fabric_simple.yml unless user explicitly says "harden"
+- ALWAYS start fabric reports with show_topology_status.yml to verify topology first
+
+Check Hardening Status (READ-ONLY) - CRITICAL:
+- When user says "show hardening", "check hardening", "hardening status", "hardening on leaf1" → DO NOT use intelligent_playbook_orchestration! 
+- Instead, directly call: run_playbook with playbook="check_hardening_status.yml" and appropriate limit
+- This playbook READS current config WITHOUT making changes
+- After completion:
+  1) Call list_reports with prefix "hardening_status/"
+  2) Call read_report_file for each device (e.g. "hardening_status/leaf1_status.txt")
+  3) Present as table: | Device | SSH Hardened | NTP Configured | Banner Set | Overall Status |
+
+Harden / Unharden Fabric (MAKES CHANGES):
+- When user EXPLICITLY says "harden the network", "harden fabric", "apply hardening", "baseline hardening" → ALWAYS call intelligent_playbook_orchestration with user_request set to the exact message.
+- When user says "unharden", "remove hardening", "reverse hardening", "undo hardening" → ALWAYS call intelligent_playbook_orchestration.
+- ONLY include harden_fabric_simple.yml when user explicitly requests hardening.
 - After harden completes:
   1) Call list_reports with prefix "hardening/" to find the per-device audit files
   2) Call read_report_file for each device's hardening file (e.g. "hardening/leaf1_hardening.txt")
   3) Present results as a markdown table: | Device | SSH Config | NTP Config | Banner Config | Status |
-  4) Also provide the compliance report link: BASE_URL/reports/fabric_compliance/index.html
+  4) Also provide the compliance report link: Reports Base URL/fabric_compliance/index.html
 - After unharden completes:
   1) Call list_reports with prefix "unhardening/" to find the per-device audit files
   2) Call read_report_file for each device's unhardening file (e.g. "unhardening/leaf1_unhardening.txt")
@@ -388,11 +413,11 @@ Harden / Unharden Fabric:
   4) Note: compliance report link is not relevant for unharden — just show the table
 
 Network Compliance Report (CRITICAL DISTINCTION):
-- When user EXPLICITLY says: "network compliance report", "create network report", "network report" (must contain word "network") → run: generate_network_compliance_report.yml (NOT fabric_audit_all.yml)
+- When user EXPLICITLY says: "network compliance report", "create network report", "network report", "generate network compliance report" (must contain word "network") → DO NOT use intelligent_playbook_orchestration! Instead, directly call: run_playbook with playbook="generate_network_compliance_report.yml"
 - This playbook ONLY collects device info (vendor, hostname, IP, serial, version) and generates a simple HTML report
-- After completion, provide link: BASE_URL/reports/compliance/index.html
-- This is DIFFERENT from fabric_audit_all.yml which does a full audit (interfaces, VLANs, hardening, etc.)
-- DEFAULT: If user just says "compliance report" without "network", use fabric_audit_all.yml
+- After completion, provide link: Reports Base URL/compliance/index.html
+- This is DIFFERENT from fabric compliance which audits interfaces, VLANs, topology, etc.
+- DEFAULT: If user just says "compliance report" or "fabric report" without "network", use intelligent_playbook_orchestration for fabric compliance
 
 Identity & model questions:
 - When the user asks "which model are you using", "what model is this", "are you flash or pro", "which gemini model", or similar → always answer directly: "I am using **${GEMINI_MODEL}** (provider: ${MODEL_PROVIDER})." Do not deflect or say you are a large language model — just state the model name from config.
@@ -1138,7 +1163,17 @@ const app = express();
 // req.protocol and related helpers reflect the original client scheme.
 app.set("trust proxy", true);
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+
+// Disable caching for static files to ensure users get latest version
+app.use(express.static(path.join(__dirname, "public"), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js') || filePath.endsWith('.html') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 // Serve generated Ansible reports (HTML/text) from the Ansible project root.
 // Use relative links (/reports/...) so it works regardless of the server's IP/hostname.
 app.use("/reports", express.static(path.join(ANSIBLE_PROJECT_ROOT, "reports")));
@@ -1200,6 +1235,38 @@ app.get("/query-stream", async (req, res) => {
     res.write("data: [DONE]\n\n");
     res.end();
   }
+});
+
+// Persistent SSE endpoint for user count tracking
+app.get("/user-tracking", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  // Track this connection
+  activeConnections.add(res);
+  
+  // Send initial count
+  res.write(`data: ${JSON.stringify({ type: 'user_count_update', count: activeConnections.size })}\n\n`);
+  
+  // Broadcast to all
+  broadcastUserCount();
+
+  // Remove on disconnect
+  req.on('close', () => {
+    activeConnections.delete(res);
+    broadcastUserCount();
+  });
+
+  // Keep connection alive with heartbeat every 30 seconds
+  const heartbeat = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 30000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+  });
 });
 
 // API endpoint to get current configuration (Gemini model)

@@ -962,7 +962,18 @@ Rules:
 - Only include playbooks that exist in the available list
 - Order matters: put prerequisite playbooks first
 - Be conservative: only include playbooks directly related to the request
-- If the request is unclear or no playbooks match, return an empty playbooks array"""
+- If the request is unclear or no playbooks match, return an empty playbooks array
+
+CRITICAL RULES FOR COMPLIANCE/FABRIC REPORTS:
+- For "fabric report", "fabric compliance", "create fabric report", "generate fabric report" (WITHOUT "network" keyword):
+  * ALWAYS start with: show_topology_status.yml
+  * Then include: show_interfaces_all.yml, show_unused_ports.yml, check_vlan_consistency.yml
+  * End with: generate_fabric_compliance_report.yml
+  * DO NOT include harden_fabric_simple.yml - it CHANGES configuration!
+- ONLY include harden_fabric_simple.yml when user EXPLICITLY says "harden", "apply hardening", "baseline hardening"
+- For compliance reports, we READ current state, we do NOT modify it
+- If user says "network compliance report" or includes word "network", return empty playbooks array - this should be handled by direct run_playbook call, not orchestration
+- If user says "show hardening", "check hardening", "hardening status", return empty playbooks array - this should be handled by direct run_playbook(check_hardening_status.yml), not orchestration"""
 
         try:
             import os
