@@ -55,7 +55,7 @@
 
     - name: Analyze banner status
       ansible.builtin.set_fact:
-        banner_set: "{{ 'Authorized access only' in (banner_config.stdout[0] | default('')) or 'UNAUTHORIZED ACCESS' in (banner_config.stdout[0] | default('')) }}"
+        banner_set: "{{ 'AUTHORIZED ACCESS' in (banner_config.stdout[0] | default('')) or 'Authorized access only' in (banner_config.stdout[0] | default('')) or 'UNAUTHORIZED' in (banner_config.stdout[0] | default('')) }}"
 
     - name: Determine overall status
       ansible.builtin.set_fact:

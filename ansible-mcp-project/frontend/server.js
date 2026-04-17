@@ -352,8 +352,11 @@ Topology Status:
 
 SSL Certificate Workflows (CRITICAL - URL FORMAT):
 - When user says "renew ssl", "renew certificate", "ssl expired", "fix ssl", "renew the ssl certificate for snoopy", or similar → ALWAYS call: intelligent_playbook_orchestration. It will run: ssl_cert_check_expiry.yml → ssl_cert_deploy_new.yml → ssl_cert_generate_report.yml in sequence.
-- When user says "make cert expire", "make certificate expire", "simulate expiry", "demo expire" → call: intelligent_playbook_orchestration. It will run: ssl_cert_make_expire.yml → ssl_cert_check_expiry.yml.
-- When user says "setup ssl env", "ssl demo setup" → run demo_setup_all.yml
+- When user says "make cert expire", "make certificate expire", "simulate expiry", "demo expire", "disable ssl certificate" → call: intelligent_playbook_orchestration. It will run: ssl_cert_make_expire.yml → ssl_cert_check_expiry.yml → ssl_cert_generate_report.yml.
+- When user says "check ssl", "ssl status", "certificate status" → call: intelligent_playbook_orchestration. It will run: ssl_cert_check_expiry.yml → ssl_cert_generate_report.yml.
+- When user says "setup ssl env", "ssl demo setup", "setup ssl demo" → run demo_setup_all.yml
+- When user says "delete ssl demo", "cleanup ssl", "remove ssl demo" → run demo_cleanup_all.yml
+- CRITICAL: ALWAYS include ssl_cert_generate_report.yml at the END of any SSL workflow to ensure the report is up-to-date
 - CRITICAL: SSL report URL MUST include /reports/ prefix: https://snoopy.timlam007.com/reports/ssl_report/index.html
 - After SSL operations complete, ALWAYS provide the SSL report link: https://snoopy.timlam007.com/reports/ssl_report/index.html
 
@@ -389,13 +392,15 @@ PLAYBOOK SELECTION RULES (CRITICAL):
 - ALWAYS start fabric reports with show_topology_status.yml to verify topology first
 
 Check Hardening Status (READ-ONLY) - CRITICAL:
-- When user says "show hardening", "check hardening", "hardening status", "hardening on leaf1" → DO NOT use intelligent_playbook_orchestration! 
+- When user says "show hardening", "check hardening", "hardening status", "hardening on leaf1", "network hardening report", "hardening report" → DO NOT use intelligent_playbook_orchestration! 
 - Instead, directly call: run_playbook with playbook="check_hardening_status.yml" and appropriate limit
 - This playbook READS current config WITHOUT making changes
 - After completion:
   1) Call list_reports with prefix "hardening_status/"
   2) Call read_report_file for each device (e.g. "hardening_status/leaf1_status.txt")
   3) Present as table: | Device | SSH Hardened | NTP Configured | Banner Set | Overall Status |
+  4) Provide full URLs to individual reports: Reports Base URL/hardening_status/leaf1_status.txt (e.g., http://34.197.12.47:9000/hardening_status/leaf1_status.txt)
+- IMPORTANT: "network hardening report" = check current hardening status (read-only), NOT apply hardening
 
 Harden / Unharden Fabric (MAKES CHANGES):
 - When user EXPLICITLY says "harden the network", "harden fabric", "apply hardening", "baseline hardening" → ALWAYS call intelligent_playbook_orchestration with user_request set to the exact message.
@@ -629,6 +634,26 @@ const RULE_BOOST_MAP = [
 
 function applyRuleBoost(userRequest) {
   const q = userRequest.toLowerCase();
+  
+  // Multi-task detection: if request contains multiple task indicators, skip rule boost
+  // and let Gemini plan the full workflow
+  const multiTaskIndicators = [
+    'and', 'also', 'then', 'plus', 'additionally', 'as well',
+    'check hardening', 'unused ports', 'compliance report', 'fabric report',
+    'vlan consistency', 'topology status', 'interface status'
+  ];
+  
+  let taskCount = 0;
+  for (const indicator of multiTaskIndicators) {
+    if (q.includes(indicator)) taskCount++;
+  }
+  
+  // If 3+ task indicators found, this is a complex multi-task request
+  // Skip rule boost and let Gemini plan it
+  if (taskCount >= 3) {
+    return null;
+  }
+  
   for (const rule of RULE_BOOST_MAP) {
     // matchAll: every word in the array must appear somewhere in the query
     if (rule.matchAll) {
